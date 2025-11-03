@@ -1,0 +1,18 @@
+{
+  "name": "project-ember-webapp",
+  "private": true,
+  "version": "1.0.1",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm:dev-*\"",
+    "dev-frontend": "npm --prefix frontend run dev",
+    "dev-backend": "npm --prefix backend run dev",
+    "start": "npm --prefix backend start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.0"
+  }
+}
