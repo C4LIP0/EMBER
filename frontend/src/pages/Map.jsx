@@ -71,9 +71,19 @@ function sectorPolygon(center, headingDeg, halfAngleDeg, rangeMeters, steps=24) 
   return coords
 }
 
-// ---- Leaflet icons (optional custom in /public) ----
-const mortarIcon = new L.Icon({ iconUrl: '/mortar-icon.png', iconSize: [34,34], iconAnchor: [17,34] })
-const targetIcon = new L.Icon({ iconUrl: '/target-icon.png', iconSize: [28,28], iconAnchor: [14,28] })
+// ---- Leaflet icons (using DivIcon for colored markers without image files) ----
+const mortarIcon = new L.DivIcon({
+  className: 'custom-marker',
+  html: '<div style="background-color:#4CAF50;width:24px;height:24px;border-radius:50%;border:3px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3);"></div>',
+  iconSize: [24, 24],
+  iconAnchor: [12, 12]
+})
+const targetIcon = new L.DivIcon({
+  className: 'custom-marker',
+  html: '<div style="background-color:#F44336;width:24px;height:24px;border-radius:50%;border:3px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3);"></div>',
+  iconSize: [24, 24],
+  iconAnchor: [12, 12]
+})
 
 // ---- Small subcomponents ----
 function ClickToSetTarget({ setTarget }) {
@@ -196,8 +206,8 @@ export default function MapPage() {
 
       {/* Map */}
       <div style={{height:'70vh'}}>
-        <MapContainer center={center} zoom={16} style={{height:'100%', width:'100%'}} maxZoom={20}>
-          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" />
+        <MapContainer center={center} zoom={16} style={{height:'100%', width:'100%'}} minZoom={2} maxZoom={19}>
+          <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" maxZoom={19} />
           {autoCenter && <Recenter center={center}/>}
           <ClickToSetTarget setTarget={setTarget} />
 

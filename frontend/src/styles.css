@@ -28,6 +28,7 @@ nav a.active{color:var(--brand);font-weight:600}
 .grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}
 .grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}
+.grid > div{min-width:0;overflow-wrap:break-word}
 small.muted{color:#9aa3af}
 .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;font-size:12px}
 
@@ -44,10 +45,11 @@ small.muted{color:#9aa3af}
 .badge.warn{background:rgba(255,204,102,.1);color:var(--warn)}
 .table{width:100%;border-collapse:collapse}
 .table th,.table td{padding:10px;border-bottom:1px solid var(--border);text-align:left;vertical-align:top}
-.kpi{font-size:28px;font-weight:700}
-.kpi-sub{color:#9aa3af;font-size:12px;margin-top:-6px}
+.kpi{font-size:28px;font-weight:700;word-break:break-word;overflow-wrap:break-word}
+.kpi-sub{color:#9aa3af;font-size:12px;margin-top:-6px;white-space:nowrap}
 hr.sep{border:0;border-top:1px solid var(--border);margin:10px 0}
 .map-wrap{height:60vh;border-radius:14px;overflow:hidden;border:1px solid var(--border)}
 /*======== For Map page controls ======== */
 .map-wrap.card { padding: 8px; } 
 select.input { padding:8px; border-radius:8px; }
+.custom-marker { background:transparent; border:none; }

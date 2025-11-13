@@ -63,17 +63,19 @@ export default function Dashboard() {
 
         <Card title="Environment">
           <div className="grid grid-3">
-            <div><div className="kpi">{env?.temperatureC ?? '—'}</div><div className="kpi-sub">temp °C</div></div>
-            <div><div className="kpi">{env?.humidity ?? '—'}</div><div className="kpi-sub">humidity %</div></div>
-            <div><div className="kpi">{env?.pressureHpa ?? '—'}</div><div className="kpi-sub">pressure hPa</div></div>
+            <div style={{minWidth:0}}><div className="kpi">{env?.temperatureC ?? '—'}</div><div className="kpi-sub">temp °C</div></div>
+            <div style={{minWidth:0}}><div className="kpi">{env?.humidity ?? '—'}</div><div className="kpi-sub">humidity %</div></div>
+            <div style={{minWidth:0}}><div className="kpi">{env?.pressureHpa ?? '—'}</div><div className="kpi-sub">pressure hPa</div></div>
           </div>
         </Card>
 
         <Card title="Position / Wind">
-          <div className="grid grid-3">
-            <div><div className="kpi">{gps?.lat?.toFixed?.(4) ?? '—'}</div><div className="kpi-sub">lat</div></div>
-            <div><div className="kpi">{gps?.lon?.toFixed?.(4) ?? '—'}</div><div className="kpi-sub">lon</div></div>
-            <div><div className="kpi">{wind?.windSpeedMs ?? '—'}</div><div className="kpi-sub">wind m/s</div></div>
+          <div className="grid grid-2">
+            <div style={{minWidth:0}}><div className="kpi">{gps?.lat?.toFixed?.(4) ?? '—'}</div><div className="kpi-sub">lat</div></div>
+            <div style={{minWidth:0}}><div className="kpi">{gps?.lon?.toFixed?.(4) ?? '—'}</div><div className="kpi-sub">lon</div></div>
+          </div>
+          <div style={{marginTop:12}}>
+            <div className="kpi">{wind?.windSpeedMs ?? '—'}</div><div className="kpi-sub">wind m/s</div>
           </div>
         </Card>
       </div>
