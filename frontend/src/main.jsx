@@ -5,6 +5,8 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import Dashboard from './pages/Dashboard.jsx'
 import MapPage from './pages/Map.jsx'
 import SensorStatus from './pages/SensorStatus.jsx'
+import ManualControl from './pages/ManualControl.jsx';
+
 
 // Leaflet CSS + manual icon setup (no leaflet-defaulticon-compatibility)
 import 'leaflet/dist/leaflet.css'
@@ -35,6 +37,7 @@ function Shell() {
           <NavLink to="/" end>Dashboard</NavLink>
           <NavLink to="/map">Map</NavLink>
           <NavLink to="/sensors">Sensors</NavLink>
+          <NavLink to="/manual">Manual</NavLink>
         </div>
         <button className="btn ghost" onClick={()=>setTheme(theme==="dark"?"light":"dark")}>
           {theme==="dark"?"☀️ Light":"🌙 Dark"}
@@ -46,6 +49,7 @@ function Shell() {
           <Route path="/" element={<Dashboard/>}/>
           <Route path="/map" element={<MapPage/>}/>
           <Route path="/sensors" element={<SensorStatus/>}/>
+          <Route path="/manual" element={<ManualControl/>}/>
         </Routes>
       </div>
     </div>
