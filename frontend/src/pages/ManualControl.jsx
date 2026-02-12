@@ -112,16 +112,25 @@ function JoystickRing({ onDown, onUp, onStop }) {
 }
 
 export default function ManualControl() {
+  // ✅ Backend base URL (your backend is on 8080)
+  const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
+
   const [speed01, setSpeed01] = useState(0.35);
   const [ttlMs, setTtlMs] = useState(500);
   const [enabled, setEnabled] = useState({ yaw: false, pitch: false });
   const [log, setLog] = useState([]);
 
-  // ✅ SAFE SIM trigger UI
+  // ✅ Solenoids UI state
   const [armed, setArmed] = useState(false);
   const [holdingTrigger, setHoldingTrigger] = useState(false);
   const triggerHoldTimer = useRef(null);
   const TRIGGER_HOLD_MS = 1200;
+
+  const [solBusy, setSolBusy] = useState(false);
+  const [solError, setSolError] = useState("");
+  const [solReady, setSolReady] = useState(false);
+  const [lastFireTs, setLastFireTs] = useState(null);
+  const [lastEjectTs, setLastEjectTs] = useState(null);
 
   const transport = useMemo(
     () =>
@@ -130,6 +139,67 @@ export default function ManualControl() {
       }),
     []
   );
+
+  // ✅ helper: log backend responses into the Command log
+  const pushBackendLog = (type, payload) => {
+    setLog((l) => [{ ts: Date.now(), type, payload }, ...l].slice(0, 20));
+  };
+
+  // ✅ generic POST helper to backend
+  const solPost = async (path, body) => {
+    setSolError("");
+    setSolBusy(true);
+    try {
+      const r = await fetch(`${API_BASE}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      const j = await r.json();
+      pushBackendLog(`SOL ${path}`, j);
+      return j;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      setSolError(msg);
+      pushBackendLog(`SOL ERROR ${path}`, { error: msg });
+      throw e;
+    } finally {
+      setSolBusy(false);
+    }
+  };
+
+  // ✅ status/detect
+  const detectSolenoids = async () => {
+    setSolError("");
+    try {
+      const r = await fetch(`${API_BASE}/api/solenoids/status`);
+      const j = await r.json();
+      pushBackendLog("SOL /api/solenoids/status", j);
+      const s = j?.status ?? j;
+      setSolReady(Boolean(s?.ready || s?.available));
+      return s;
+    } catch (e) {
+      const msg = String(e?.message || e);
+      setSolError(msg);
+      setSolReady(false);
+      pushBackendLog("SOL ERROR /api/solenoids/status", { error: msg });
+    }
+  };
+
+  // ✅ actions
+  const fireLaunch = async () => {
+    await solPost("/api/solenoids/shoot", { pulseMs: 200 });
+    setLastFireTs(Date.now());
+  };
+
+  const ejectAir = async () => {
+    await solPost("/api/solenoids/release", { pulseMs: 500 });
+    setLastEjectTs(Date.now());
+  };
+
+  const allOff = async () => {
+    await solPost("/api/solenoids/allOff", {});
+  };
 
   // hold-to-move intervals
   const timers = useRef(new Map()); // key -> intervalId
@@ -184,11 +254,16 @@ export default function ManualControl() {
 
   const startTriggerHold = () => {
     if (!armed) return;
+    if (!solReady) {
+      setSolError("Solenoids not ready. Click DETECT first.");
+      return;
+    }
     if (triggerHoldTimer.current) return;
 
     setHoldingTrigger(true);
     triggerHoldTimer.current = setTimeout(() => {
-      transport.triggerSim(); // ✅ simulation/log only
+      // ✅ REAL FIRE instead of simulation
+      fireLaunch().catch(() => {});
       setHoldingTrigger(false);
       triggerHoldTimer.current = null;
     }, TRIGGER_HOLD_MS);
@@ -199,11 +274,13 @@ export default function ManualControl() {
     const onBlur = () => {
       cancelTriggerHold();
       stopAll();
+      allOff().catch(() => {});
     };
     const onVis = () => {
       if (document.visibilityState !== "visible") {
         cancelTriggerHold();
         stopAll();
+        allOff().catch(() => {});
       }
     };
     window.addEventListener("blur", onBlur);
@@ -226,6 +303,7 @@ export default function ManualControl() {
       if (e.key === " ") {
         cancelTriggerHold();
         stopAll();
+        allOff().catch(() => {});
       }
     };
     const up = (e) => {
@@ -242,9 +320,16 @@ export default function ManualControl() {
       window.removeEventListener("keyup", up);
       cancelTriggerHold();
       stopAll();
+      allOff().catch(() => {});
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [speed01, ttlMs, armed]);
+  }, [speed01, ttlMs, armed, solReady]);
+
+  // ✅ detect on load
+  useEffect(() => {
+    detectSolenoids();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Minimal inline styles so it looks OK even without new CSS
   const pill = {
@@ -272,6 +357,20 @@ export default function ManualControl() {
     opacity: disabled ? 0.5 : 1,
   });
 
+  const ejectBtn = (disabled) => ({
+    width: "100%",
+    marginTop: 10,
+    borderRadius: 14,
+    padding: "14px 14px",
+    fontWeight: 900,
+    letterSpacing: ".4px",
+    border: "1px solid var(--border)",
+    background: "rgba(0,120,255,.10)",
+    color: "#0b57d0",
+    cursor: disabled ? "not-allowed" : "pointer",
+    opacity: disabled ? 0.5 : 1,
+  });
+
   return (
     <div className="mc-wrap">
       <div className="mc-header">
@@ -281,6 +380,7 @@ export default function ManualControl() {
           onClick={() => {
             cancelTriggerHold();
             stopAll();
+            allOff().catch(() => {});
           }}
         >
           STOP ALL
@@ -339,9 +439,7 @@ export default function ManualControl() {
           <div className="mc-motor-row">
             <div>
               <div className="mc-motor-name">Pitch (#2)</div>
-              <div className="mc-muted">
-                Enabled: {enabled.pitch ? "YES" : "NO"}
-              </div>
+              <div className="mc-muted">Enabled: {enabled.pitch ? "YES" : "NO"}</div>
             </div>
             <div className="mc-actions">
               <button onClick={() => enableAxis("pitch")}>Enable</button>
@@ -349,19 +447,19 @@ export default function ManualControl() {
             </div>
           </div>
 
-          <div className="mc-hint">
-            Mock now. Later: send to Node backend → ticcmd.
-          </div>
+          <div className="mc-hint">Mock now. Later: send to Node backend → ticcmd.</div>
         </div>
 
-        {/* ✅ SAFE SIM trigger UI */}
+        {/* ✅ REAL solenoid controls */}
         <div className="mc-card">
           <div className="mc-card-title">Actions</div>
 
           <div className="mc-motor-row">
             <div>
               <div className="mc-motor-name">Arm</div>
-              <div className="mc-muted">Required before Trigger (SIM)</div>
+              <div className="mc-muted">
+                Required before FIRE / EJECT — Status: {solReady ? "READY ✅" : "NOT READY ❌"}
+              </div>
             </div>
 
             <label style={pill}>
@@ -373,15 +471,22 @@ export default function ManualControl() {
                   setArmed(e.target.checked);
                 }}
               />
-              <span style={{ fontWeight: 800 }}>
-                {armed ? "ARMED" : "SAFE"}
-              </span>
+              <span style={{ fontWeight: 800 }}>{armed ? "ARMED" : "SAFE"}</span>
             </label>
           </div>
 
+          <div className="mc-row" style={{ gap: 10, marginTop: 8 }}>
+            <button onClick={detectSolenoids} disabled={solBusy} style={{ width: "auto" }}>
+              DETECT
+            </button>
+            <button onClick={() => allOff().catch(() => {})} disabled={solBusy} style={{ width: "auto" }}>
+              ALL OFF
+            </button>
+          </div>
+
           <button
-            style={triggerBtn(!armed)}
-            disabled={!armed}
+            style={triggerBtn(!armed || !solReady || solBusy)}
+            disabled={!armed || !solReady || solBusy}
             onPointerDown={(e) => {
               e.currentTarget.setPointerCapture(e.pointerId);
               startTriggerHold();
@@ -390,11 +495,31 @@ export default function ManualControl() {
             onPointerCancel={cancelTriggerHold}
             onPointerLeave={cancelTriggerHold}
           >
-            {holdingTrigger ? `HOLDING... (${TRIGGER_HOLD_MS}ms)` : "HOLD TO TRIGGER (SIM)"}
+            {holdingTrigger ? `HOLDING... (${TRIGGER_HOLD_MS}ms)` : "HOLD TO FIRE / LAUNCH (GPIO23)"}
           </button>
 
-          <div className="mc-hint">
-            This is simulation only (logs a “triggerSim” event). No hardware action.
+          {/* ✅ NEW EJECT BUTTON */}
+          <button
+            style={ejectBtn(!armed || !solReady || solBusy)}
+            disabled={!armed || !solReady || solBusy}
+            onClick={() => ejectAir().catch(() => {})}
+          >
+            EJECT AIR (EMERGENCY) (GPIO24)
+          </button>
+
+          {solError ? (
+            <div className="mc-hint" style={{ color: "#b00020", marginTop: 10 }}>
+              {solError}
+            </div>
+          ) : null}
+
+          <div className="mc-hint" style={{ marginTop: 10 }}>
+            {lastFireTs ? `Last FIRE: ${new Date(lastFireTs).toLocaleTimeString()}` : "Last FIRE: —"} <br />
+            {lastEjectTs ? `Last EJECT: ${new Date(lastEjectTs).toLocaleTimeString()}` : "Last EJECT: —"}
+          </div>
+
+          <div className="mc-hint" style={{ marginTop: 6 }}>
+            Backend: <span className="mc-muted">{API_BASE}</span>
           </div>
         </div>
 
@@ -412,6 +537,7 @@ export default function ManualControl() {
             onStop={() => {
               cancelTriggerHold();
               stopAll();
+              allOff().catch(() => {});
             }}
           />
         </div>
@@ -425,9 +551,7 @@ export default function ManualControl() {
           ) : (
             log.map((x) => (
               <div key={x.ts} className="mc-log-line">
-                <span className="mc-muted">
-                  {new Date(x.ts).toLocaleTimeString()}
-                </span>
+                <span className="mc-muted">{new Date(x.ts).toLocaleTimeString()}</span>
                 <span className="mc-log-type">{x.type}</span>
                 <span className="mc-muted">{JSON.stringify(x.payload)}</span>
               </div>

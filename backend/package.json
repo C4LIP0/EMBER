@@ -10,7 +10,9 @@
   "dependencies": {
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "onoff": "^6.0.3",
+    "pigpio": "^3.3.1"
   },
   "devDependencies": {
     "nodemon": "^3.1.0"

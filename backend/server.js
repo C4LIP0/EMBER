@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { createRequire } from "module";
+import { solenoids } from "./solenoids.js";
 
 dotenv.config();
 
@@ -123,7 +124,43 @@ async function initDoorSensor() {
 }
 
 // kick it off
-initDoorSensor();
+// ----------------------------
+// Solenoids setup 
+// ----------------------------
+solenoids.init();
+
+app.get("/api/solenoids/status", (req, res) => {
+  res.json(solenoids.status());
+});
+
+app.post("/api/solenoids/allOff", async (req, res) => {
+  try {
+    const status = await solenoids.allOff();
+    res.json({ ok: true, status });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() });
+  }
+});
+
+app.post("/api/solenoids/shoot", async (req, res) => {
+  try {
+    const { on, pulseMs } = req.body || {};
+    const status = await solenoids.shoot({ on, pulseMs });
+    res.json({ ok: true, status });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() });
+  }
+});
+
+app.post("/api/solenoids/release", async (req, res) => {
+  try {
+    const { on, pulseMs } = req.body || {};
+    const status = await solenoids.release({ on, pulseMs });
+    res.json({ ok: true, status });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() });
+  }
+});
 
 // ----------------------------
 // Existing endpoints
