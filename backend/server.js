@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { createRequire } from "module";
 import { solenoids } from "./solenoids.js";
+import * as pressure from "./pressure.js";
 
 dotenv.config();
 
@@ -122,7 +123,7 @@ async function initDoorSensor() {
     console.warn("[door] Error:", err?.message || err);
   }
 }
-
+initDoorSensor();
 // kick it off
 // ----------------------------
 // Solenoids setup 
@@ -161,6 +162,47 @@ app.post("/api/solenoids/release", async (req, res) => {
     res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() });
   }
 });
+
+// ----------------------------
+// Pressure sensor setup
+// ----------------------------
+
+
+const pressureClients = new Set();
+
+pressure.init({
+  onUpdate: (reading) => {
+    const payload = `data: ${JSON.stringify(reading)}\n\n`;
+    for (const res of pressureClients) {
+      try { res.write(payload); } catch {}
+    }
+  },
+});
+
+app.get("/api/pressure/latest", (req, res) => {
+  const r = pressure.latest();
+  if (!r) return res.status(503).json({ ok: false, error: "No reading yet" });
+  res.json({ ok: true, ...r });
+});
+
+app.get("/api/pressure/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
+  res.write("retry: 1000\n\n");
+
+  pressureClients.add(res);
+
+  const r = pressure.latest();
+  if (r) res.write(`data: ${JSON.stringify(r)}\n\n`);
+
+  req.on("close", () => {
+    pressureClients.delete(res);
+  });
+});
+
 
 // ----------------------------
 // Existing endpoints

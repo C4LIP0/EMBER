@@ -23,7 +23,7 @@ function createMockTransport(onEvent) {
     stop: async (axis) => emit("stop", { axis }),
     stopAll: async () => emit("stopAll", {}),
 
-    // ✅ SAFE STUB ONLY (simulation/log)
+    // SAFE STUB ONLY (simulation/log)
     triggerSim: async () => emit("triggerSim", { simulated: true }),
   };
 }
@@ -112,7 +112,7 @@ function JoystickRing({ onDown, onUp, onStop }) {
 }
 
 export default function ManualControl() {
-  // ✅ Backend base URL (your backend is on 8080)
+  // Backend base URL (your backend is on 8080)
   const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8080";
 
   const [speed01, setSpeed01] = useState(0.35);
@@ -120,7 +120,7 @@ export default function ManualControl() {
   const [enabled, setEnabled] = useState({ yaw: false, pitch: false });
   const [log, setLog] = useState([]);
 
-  // ✅ Solenoids UI state
+  // Solenoids UI state
   const [armed, setArmed] = useState(false);
   const [holdingTrigger, setHoldingTrigger] = useState(false);
   const triggerHoldTimer = useRef(null);
@@ -132,6 +132,12 @@ export default function ManualControl() {
   const [lastFireTs, setLastFireTs] = useState(null);
   const [lastEjectTs, setLastEjectTs] = useState(null);
 
+  // Pressure (PSI) realtime
+  const [pressure, setPressure] = useState({ psi: null, v_adc: null, ts: null });
+  const [pressureConn, setPressureConn] = useState("DISCONNECTED");
+
+  
+
   const transport = useMemo(
     () =>
       createMockTransport((evt) => {
@@ -140,12 +146,12 @@ export default function ManualControl() {
     []
   );
 
-  // ✅ helper: log backend responses into the Command log
+  // helper: log backend responses into the Command log
   const pushBackendLog = (type, payload) => {
     setLog((l) => [{ ts: Date.now(), type, payload }, ...l].slice(0, 20));
   };
 
-  // ✅ generic POST helper to backend
+  // generic POST helper to backend
   const solPost = async (path, body) => {
     setSolError("");
     setSolBusy(true);
@@ -168,7 +174,7 @@ export default function ManualControl() {
     }
   };
 
-  // ✅ status/detect
+  // status/detect
   const detectSolenoids = async () => {
     setSolError("");
     try {
@@ -186,7 +192,7 @@ export default function ManualControl() {
     }
   };
 
-  // ✅ actions
+  // actions
   const fireLaunch = async () => {
     await solPost("/api/solenoids/shoot", { pulseMs: 200 });
     setLastFireTs(Date.now());
@@ -200,6 +206,76 @@ export default function ManualControl() {
   const allOff = async () => {
     await solPost("/api/solenoids/allOff", {});
   };
+
+  // REALTIME PRESSURE (SSE -> fallback polling)
+  useEffect(() => {
+    let es = null;
+    let pollId = null;
+    let stopped = false;
+
+    const setFromPayload = (d) => {
+      const psi = typeof d?.psi === "number" ? d.psi : null;
+      const v_adc = typeof d?.v_adc === "number" ? d.v_adc : null;
+      const ts = typeof d?.ts === "number" ? d.ts : Date.now();
+      setPressure({ psi, v_adc, ts });
+    };
+
+    const startPolling = () => {
+      setPressureConn("POLLING");
+      pollId = window.setInterval(async () => {
+        try {
+          const r = await fetch(`${API_BASE}/api/pressure/latest`);
+          if (!r.ok) return;
+          const d = await r.json();
+          // supports {ok:true, psi:...} or raw {psi:...}
+          setFromPayload(d?.ok ? d : d);
+        } catch {
+          // keep polling silently
+        }
+      }, 250);
+    };
+
+    const startSSE = () => {
+      try {
+        es = new EventSource(`${API_BASE}/api/pressure/stream`);
+        es.onopen = () => {
+          if (stopped) return;
+          setPressureConn("CONNECTED");
+        };
+        es.onmessage = (e) => {
+          if (stopped) return;
+          try {
+            const d = JSON.parse(e.data);
+            setFromPayload(d);
+          } catch {
+            // ignore
+          }
+        };
+        es.onerror = () => {
+          if (stopped) return;
+          try {
+            es?.close();
+          } catch { }
+          es = null;
+          if (!pollId) startPolling();
+        };
+      } catch {
+        startPolling();
+      }
+    };
+
+    startSSE();
+
+    return () => {
+      stopped = true;
+      try {
+        es?.close();
+      } catch { }
+      es = null;
+      if (pollId) window.clearInterval(pollId);
+      pollId = null;
+    };
+  }, [API_BASE]);
 
   // hold-to-move intervals
   const timers = useRef(new Map()); // key -> intervalId
@@ -262,8 +338,7 @@ export default function ManualControl() {
 
     setHoldingTrigger(true);
     triggerHoldTimer.current = setTimeout(() => {
-      // ✅ REAL FIRE instead of simulation
-      fireLaunch().catch(() => {});
+      fireLaunch().catch(() => { });
       setHoldingTrigger(false);
       triggerHoldTimer.current = null;
     }, TRIGGER_HOLD_MS);
@@ -274,13 +349,13 @@ export default function ManualControl() {
     const onBlur = () => {
       cancelTriggerHold();
       stopAll();
-      allOff().catch(() => {});
+      allOff().catch(() => { });
     };
     const onVis = () => {
       if (document.visibilityState !== "visible") {
         cancelTriggerHold();
         stopAll();
-        allOff().catch(() => {});
+        allOff().catch(() => { });
       }
     };
     window.addEventListener("blur", onBlur);
@@ -303,7 +378,7 @@ export default function ManualControl() {
       if (e.key === " ") {
         cancelTriggerHold();
         stopAll();
-        allOff().catch(() => {});
+        allOff().catch(() => { });
       }
     };
     const up = (e) => {
@@ -320,12 +395,12 @@ export default function ManualControl() {
       window.removeEventListener("keyup", up);
       cancelTriggerHold();
       stopAll();
-      allOff().catch(() => {});
+      allOff().catch(() => { });
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [speed01, ttlMs, armed, solReady]);
 
-  // ✅ detect on load
+  // detect on load
   useEffect(() => {
     detectSolenoids();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -371,6 +446,13 @@ export default function ManualControl() {
     opacity: disabled ? 0.5 : 1,
   });
 
+  const pressureBig = {
+    fontSize: 34,
+    fontWeight: 900,
+    lineHeight: 1.0,
+    marginTop: 8,
+  };
+
   return (
     <div className="mc-wrap">
       <div className="mc-header">
@@ -380,7 +462,7 @@ export default function ManualControl() {
           onClick={() => {
             cancelTriggerHold();
             stopAll();
-            allOff().catch(() => {});
+            allOff().catch(() => { });
           }}
         >
           STOP ALL
@@ -447,10 +529,37 @@ export default function ManualControl() {
             </div>
           </div>
 
-          <div className="mc-hint">Mock now. Later: send to Node backend → ticcmd.</div>
+          <div className="mc-hint">
+            Mock now. Later: send to Node backend {"->"} ticcmd.
+          </div>
         </div>
 
-        {/* ✅ REAL solenoid controls */}
+        {/* PRESSURE CARD */}
+        <div className="mc-card">
+          <div className="mc-card-title">Pressure</div>
+
+          <div style={pressureBig}>
+            {pressure.psi == null ? "--" : `${pressure.psi.toFixed(1)} PSI`}
+          </div>
+
+          <div className="mc-muted" style={{ marginTop: 6 }}>
+            A0: {pressure.v_adc == null ? "--" : `${pressure.v_adc.toFixed(3)} V`}
+          </div>
+
+          <div className="mc-muted">
+            Updated: {pressure.ts ? new Date(pressure.ts).toLocaleTimeString() : "--"}
+          </div>
+
+          <div className="mc-hint" style={{ marginTop: 8 }}>
+            Stream: <span className="mc-muted">{pressureConn}</span>
+          </div>
+
+          <div className="mc-hint" style={{ marginTop: 6 }}>
+            Backend: <span className="mc-muted">{API_BASE}</span>
+          </div>
+        </div>
+
+        {/* REAL solenoid controls */}
         <div className="mc-card">
           <div className="mc-card-title">Actions</div>
 
@@ -458,7 +567,7 @@ export default function ManualControl() {
             <div>
               <div className="mc-motor-name">Arm</div>
               <div className="mc-muted">
-                Required before FIRE / EJECT — Status: {solReady ? "READY ✅" : "NOT READY ❌"}
+                Required before FIRE / EJECT - Status: {solReady ? "READY" : "NOT READY"}
               </div>
             </div>
 
@@ -479,7 +588,11 @@ export default function ManualControl() {
             <button onClick={detectSolenoids} disabled={solBusy} style={{ width: "auto" }}>
               DETECT
             </button>
-            <button onClick={() => allOff().catch(() => {})} disabled={solBusy} style={{ width: "auto" }}>
+            <button
+              onClick={() => allOff().catch(() => { })}
+              disabled={solBusy}
+              style={{ width: "auto" }}
+            >
               ALL OFF
             </button>
           </div>
@@ -495,14 +608,15 @@ export default function ManualControl() {
             onPointerCancel={cancelTriggerHold}
             onPointerLeave={cancelTriggerHold}
           >
-            {holdingTrigger ? `HOLDING... (${TRIGGER_HOLD_MS}ms)` : "HOLD TO FIRE / LAUNCH (GPIO23)"}
+            {holdingTrigger
+              ? `HOLDING... (${TRIGGER_HOLD_MS}ms)`
+              : "HOLD TO FIRE / LAUNCH (GPIO23)"}
           </button>
 
-          {/* ✅ NEW EJECT BUTTON */}
           <button
             style={ejectBtn(!armed || !solReady || solBusy)}
             disabled={!armed || !solReady || solBusy}
-            onClick={() => ejectAir().catch(() => {})}
+            onClick={() => ejectAir().catch(() => { })}
           >
             EJECT AIR (EMERGENCY) (GPIO24)
           </button>
@@ -514,12 +628,11 @@ export default function ManualControl() {
           ) : null}
 
           <div className="mc-hint" style={{ marginTop: 10 }}>
-            {lastFireTs ? `Last FIRE: ${new Date(lastFireTs).toLocaleTimeString()}` : "Last FIRE: —"} <br />
-            {lastEjectTs ? `Last EJECT: ${new Date(lastEjectTs).toLocaleTimeString()}` : "Last EJECT: —"}
-          </div>
-
-          <div className="mc-hint" style={{ marginTop: 6 }}>
-            Backend: <span className="mc-muted">{API_BASE}</span>
+            {lastFireTs ? `Last FIRE: ${new Date(lastFireTs).toLocaleTimeString()}` : "Last FIRE: --"}{" "}
+            <br />
+            {lastEjectTs
+              ? `Last EJECT: ${new Date(lastEjectTs).toLocaleTimeString()}`
+              : "Last EJECT: --"}
           </div>
         </div>
 
@@ -537,7 +650,7 @@ export default function ManualControl() {
             onStop={() => {
               cancelTriggerHold();
               stopAll();
-              allOff().catch(() => {});
+              allOff().catch(() => { });
             }}
           />
         </div>
