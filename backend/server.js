@@ -4,6 +4,7 @@ import dotenv from "dotenv";
 import { createRequire } from "module";
 import { solenoids } from "./solenoids.js";
 import * as pressure from "./pressure.js";
+import * as imu from "./imu.js";
 
 dotenv.config();
 
@@ -202,6 +203,42 @@ app.get("/api/pressure/stream", (req, res) => {
     pressureClients.delete(res);
   });
 });
+// ----------------------------
+// IMU (BNO055) setup
+// ----------------------------
+const imuClients = new Set();
+
+imu.init({
+  onUpdate: (reading) => {
+    const payload = `data: ${JSON.stringify(reading)}\n\n`;
+    for (const res of imuClients) {
+      try { res.write(payload); } catch {}
+    }
+  },
+});
+
+app.get("/api/imu/latest", (req, res) => {
+  const r = imu.latest();
+  if (!r) return res.status(503).json({ ok: false, error: "No IMU reading yet" });
+  res.json({ ok: true, ...r });
+});
+
+app.get("/api/imu/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
+  res.write("retry: 1000\n\n");
+  imuClients.add(res);
+
+  const r = imu.latest();
+  if (r) res.write(`data: ${JSON.stringify(r)}\n\n`);
+
+  req.on("close", () => {
+    imuClients.delete(res);
+  });
+});
 
 
 // ----------------------------
@@ -211,7 +248,39 @@ app.get("/api/health", (_req, res) =>
   res.json({ status: "ok", time: new Date().toISOString() })
 );
 
-app.get("/api/sensors", (_req, res) => res.json({ sensors }));
+app.get("/api/sensors", (_req, res) => {
+  const nowIso = new Date().toISOString();
+
+  const out = sensors.map((s) => ({ ...s }));
+
+  const pr = pressure.latest?.() || null;
+  out.push({
+    id: "Pressure",
+    type: "Pressure",
+    updatedAt: pr?.ts ? new Date(pr.ts).toISOString() : null,
+    ...pr,
+  });
+
+  const im = imu.latest?.() || null;
+  out.push({
+    id: "IMU",
+    type: "IMU",
+    updatedAt: im?.ts ? new Date(im.ts).toISOString() : null,
+    ...im,
+  });
+
+  const sol = solenoids.status?.() || null;
+  out.push({
+    id: "Solenoids",
+    type: "Actuator",
+    updatedAt: nowIso,
+    ...sol,
+  });
+
+  res.json({ sensors: out });
+});
+
+
 
 // New: quick door endpoint
 app.get("/api/door", (_req, res) => {

@@ -14,7 +14,7 @@ V_MIN = float(os.getenv("PRESSURE_V_MIN", str(0.10 * V_SUPPLY)))
 V_MAX = float(os.getenv("PRESSURE_V_MAX", str(0.90 * V_SUPPLY)))
 
 P_MIN = float(os.getenv("PRESSURE_P_MIN", "0.0"))
-P_MAX = float(os.getenv("PRESSURE_P_MAX", "100.0"))
+P_MAX = float(os.getenv("PRESSURE_P_MAX", "300.0"))
 
 SAMPLE_PERIOD = float(os.getenv("PRESSURE_SAMPLE_PERIOD", "0.2"))
 

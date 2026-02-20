@@ -35,7 +35,7 @@ export function init({ onUpdate } = {}) {
       ...process.env,
       PRESSURE_ADS_ADDR: process.env.PRESSURE_ADS_ADDR || "0x48",
       PRESSURE_DIVIDER_RATIO: process.env.PRESSURE_DIVIDER_RATIO || "0.6667",
-      PRESSURE_P_MAX: process.env.PRESSURE_P_MAX || "300.0",
+      PRESSURE_P_MAX: process.env.PRESSURE_P_MAX || "100.0",
       PRESSURE_SAMPLE_PERIOD: process.env.PRESSURE_SAMPLE_PERIOD || "0.2",
     },
     stdio: ["ignore", "pipe", "pipe"],

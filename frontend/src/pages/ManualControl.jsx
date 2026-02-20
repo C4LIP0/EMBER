@@ -136,7 +136,14 @@ export default function ManualControl() {
   const [pressure, setPressure] = useState({ psi: null, v_adc: null, ts: null });
   const [pressureConn, setPressureConn] = useState("DISCONNECTED");
 
-  
+  // IMU realtime
+  const [imuState, setImuState] = useState({
+  heading: null, roll: null, pitch: null, aligned: null, calib: null, ts: null
+});
+const [imuConn, setImuConn] = useState("DISCONNECTED");
+
+
+
 
   const transport = useMemo(
     () =>
@@ -206,6 +213,63 @@ export default function ManualControl() {
   const allOff = async () => {
     await solPost("/api/solenoids/allOff", {});
   };
+
+  // REALTIME IMU (SSE -> fallback polling)
+  useEffect(() => {
+  let es = null;
+  let pollId = null;
+  let stopped = false;
+
+  const setFromPayload = (d) => {
+    setImuState({
+      heading: typeof d?.heading === "number" ? d.heading : null,
+      roll: typeof d?.roll === "number" ? d.roll : null,
+      pitch: typeof d?.pitch === "number" ? d.pitch : null,
+      aligned: typeof d?.aligned === "boolean" ? d.aligned : null,
+      calib: d?.calib || null,
+      ts: typeof d?.ts === "number" ? d.ts : Date.now(),
+    });
+  };
+
+  const startPolling = () => {
+    setImuConn("POLLING");
+    pollId = window.setInterval(async () => {
+      try {
+        const r = await fetch(`${API_BASE}/api/imu/latest`);
+        if (!r.ok) return;
+        const d = await r.json();
+        setFromPayload(d?.ok ? d : d);
+      } catch {}
+    }, 250);
+  };
+
+  const startSSE = () => {
+    try {
+      es = new EventSource(`${API_BASE}/api/imu/stream`);
+      es.onopen = () => { if (!stopped) setImuConn("CONNECTED"); };
+      es.onmessage = (e) => {
+        if (stopped) return;
+        try { setFromPayload(JSON.parse(e.data)); } catch {}
+      };
+      es.onerror = () => {
+        if (stopped) return;
+        try { es?.close(); } catch {}
+        es = null;
+        if (!pollId) startPolling();
+      };
+    } catch {
+      startPolling();
+    }
+  };
+
+  startSSE();
+
+  return () => {
+    stopped = true;
+    try { es?.close(); } catch {}
+    if (pollId) window.clearInterval(pollId);
+  };
+}, [API_BASE]);
 
   // REALTIME PRESSURE (SSE -> fallback polling)
   useEffect(() => {
@@ -556,6 +620,35 @@ export default function ManualControl() {
 
           <div className="mc-hint" style={{ marginTop: 6 }}>
             Backend: <span className="mc-muted">{API_BASE}</span>
+          </div>
+        </div>
+        {/* REAL IMU PANEL */}
+        <div className="mc-card">
+          <div className="mc-card-title">IMU (BNO055)</div>
+
+          <div className="mc-muted">Stream: <span className="mc-muted">{imuConn}</span></div>
+
+          <div style={{ fontSize: 18, fontWeight: 800, marginTop: 8 }}>
+            {imuState.aligned == null ? "ALIGN: --" : imuState.aligned ? "ALIGN: OK ?" : "ALIGN: OFF ?"}
+          </div>
+
+          <div className="mc-muted" style={{ marginTop: 6 }}>
+            Heading: {imuState.heading == null ? "--" : imuState.heading.toFixed(1)}�
+            <br />
+            Roll: {imuState.roll == null ? "--" : imuState.roll.toFixed(1)}�
+            <br />
+            Pitch: {imuState.pitch == null ? "--" : imuState.pitch.toFixed(1)}�
+          </div>
+
+          <div className="mc-muted" style={{ marginTop: 6 }}>
+            Calib SYS/G/A/M:{" "}
+            {imuState.calib
+              ? `${imuState.calib.sys}/${imuState.calib.g}/${imuState.calib.a}/${imuState.calib.m}`
+              : "--"}
+          </div>
+
+          <div className="mc-muted" style={{ marginTop: 6 }}>
+            Updated: {imuState.ts ? new Date(imuState.ts).toLocaleTimeString() : "--"}
           </div>
         </div>
 
