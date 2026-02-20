@@ -5,7 +5,7 @@ import { createRequire } from "module";
 import { solenoids } from "./solenoids.js";
 import * as pressure from "./pressure.js";
 import * as imu from "./imu.js";
-
+import * as steppers from "./steppers.js";
 dotenv.config();
 
 const app = express();
@@ -163,7 +163,92 @@ app.post("/api/solenoids/release", async (req, res) => {
     res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() });
   }
 });
+// ----------------------------
+// Steppers (Pololu Tic T249)
+// ----------------------------
+app.get("/api/steppers/status", async (_req, res) => {
+  try {
+    const s = await steppers.statusAll();
+    res.json({ ok: true, ...s });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
 
+app.get("/api/steppers/yaw/status", async (_req, res) => {
+  try {
+    res.json(await steppers.statusAxis("yaw"));
+  } catch (e) {
+    res.status(500).json({ ok: false, axis: "yaw", error: String(e.message || e) });
+  }
+});
+
+app.get("/api/steppers/pitch/status", async (_req, res) => {
+  try {
+    res.json(await steppers.statusAxis("pitch"));
+  } catch (e) {
+    res.status(500).json({ ok: false, axis: "pitch", error: String(e.message || e) });
+  }
+});
+
+app.post("/api/steppers/enable", async (req, res) => {
+  try {
+    const { axis } = req.body || {};
+    const s = await steppers.enable(axis);
+    res.json({ ok: true, status: s });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+app.post("/api/steppers/disable", async (req, res) => {
+  try {
+    const { axis } = req.body || {};
+    const s = await steppers.disable(axis);
+    res.json({ ok: true, status: s });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+app.post("/api/steppers/jog", async (req, res) => {
+  try {
+    const { axis, dir, speed01 } = req.body || {};
+    const r = await steppers.jog({ axis, dir, speed01 });
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+app.post("/api/steppers/stop", async (req, res) => {
+  try {
+    const { axis } = req.body || {};
+    const r = await steppers.stop(axis);
+    res.json(r);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+app.post("/api/steppers/stopAll", async (_req, res) => {
+  try {
+    const r = await steppers.stopAll();
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+app.post("/api/steppers/zero", async (req, res) => {
+  try {
+    const { axis } = req.body || {};
+    const s = await steppers.setZero(axis);
+    res.json({ ok: true, status: s });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
 // ----------------------------
 // Pressure sensor setup
 // ----------------------------

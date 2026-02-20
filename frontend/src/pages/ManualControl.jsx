@@ -6,25 +6,34 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
  *
  * NOTE: "triggerSim" is a SAFE UI stub: it only logs an event.
  */
-function createMockTransport(onEvent) {
+function createApiTransport(API_BASE, onEvent) {
   const emit = (type, payload) => {
     const evt = { ts: Date.now(), type, payload };
     console.log("[ManualControl]", evt);
     onEvent?.(evt);
   };
 
+  const post = async (path, body) => {
+    const r = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}),
+    });
+    const j = await r.json();
+    emit(`API ${path}`, j);
+    if (!r.ok || j?.ok === false) throw new Error(j?.error || `HTTP ${r.status}`);
+    return j;
+  };
+
   return {
-    enableAxis: async (axis) => emit("enableAxis", { axis }),
-    disableAxis: async (axis) => emit("disableAxis", { axis }),
+    enableAxis: async (axis) => post("/api/steppers/enable", { axis }),
+    disableAxis: async (axis) => post("/api/steppers/disable", { axis }),
 
-    jog: async ({ axis, dir, speed01, ttlMs }) =>
-      emit("jog", { axis, dir, speed01, ttlMs }),
+    jog: async ({ axis, dir, speed01 }) =>
+      post("/api/steppers/jog", { axis, dir, speed01 }),
 
-    stop: async (axis) => emit("stop", { axis }),
-    stopAll: async () => emit("stopAll", {}),
-
-    // SAFE STUB ONLY (simulation/log)
-    triggerSim: async () => emit("triggerSim", { simulated: true }),
+    stop: async (axis) => post("/api/steppers/stop", { axis }),
+    stopAll: async () => post("/api/steppers/stopAll", {}),
   };
 }
 
@@ -138,20 +147,20 @@ export default function ManualControl() {
 
   // IMU realtime
   const [imuState, setImuState] = useState({
-  heading: null, roll: null, pitch: null, aligned: null, calib: null, ts: null
-});
-const [imuConn, setImuConn] = useState("DISCONNECTED");
+    heading: null, roll: null, pitch: null, aligned: null, calib: null, ts: null
+  });
+  const [imuConn, setImuConn] = useState("DISCONNECTED");
 
 
 
 
   const transport = useMemo(
-    () =>
-      createMockTransport((evt) => {
-        setLog((l) => [evt, ...l].slice(0, 20));
-      }),
-    []
-  );
+  () =>
+    createApiTransport(API_BASE, (evt) => {
+      setLog((l) => [evt, ...l].slice(0, 20));
+    }),
+  [API_BASE]
+);
 
   // helper: log backend responses into the Command log
   const pushBackendLog = (type, payload) => {
@@ -216,60 +225,60 @@ const [imuConn, setImuConn] = useState("DISCONNECTED");
 
   // REALTIME IMU (SSE -> fallback polling)
   useEffect(() => {
-  let es = null;
-  let pollId = null;
-  let stopped = false;
+    let es = null;
+    let pollId = null;
+    let stopped = false;
 
-  const setFromPayload = (d) => {
-    setImuState({
-      heading: typeof d?.heading === "number" ? d.heading : null,
-      roll: typeof d?.roll === "number" ? d.roll : null,
-      pitch: typeof d?.pitch === "number" ? d.pitch : null,
-      aligned: typeof d?.aligned === "boolean" ? d.aligned : null,
-      calib: d?.calib || null,
-      ts: typeof d?.ts === "number" ? d.ts : Date.now(),
-    });
-  };
+    const setFromPayload = (d) => {
+      setImuState({
+        heading: typeof d?.heading === "number" ? d.heading : null,
+        roll: typeof d?.roll === "number" ? d.roll : null,
+        pitch: typeof d?.pitch === "number" ? d.pitch : null,
+        aligned: typeof d?.aligned === "boolean" ? d.aligned : null,
+        calib: d?.calib || null,
+        ts: typeof d?.ts === "number" ? d.ts : Date.now(),
+      });
+    };
 
-  const startPolling = () => {
-    setImuConn("POLLING");
-    pollId = window.setInterval(async () => {
+    const startPolling = () => {
+      setImuConn("POLLING");
+      pollId = window.setInterval(async () => {
+        try {
+          const r = await fetch(`${API_BASE}/api/imu/latest`);
+          if (!r.ok) return;
+          const d = await r.json();
+          setFromPayload(d?.ok ? d : d);
+        } catch { }
+      }, 250);
+    };
+
+    const startSSE = () => {
       try {
-        const r = await fetch(`${API_BASE}/api/imu/latest`);
-        if (!r.ok) return;
-        const d = await r.json();
-        setFromPayload(d?.ok ? d : d);
-      } catch {}
-    }, 250);
-  };
+        es = new EventSource(`${API_BASE}/api/imu/stream`);
+        es.onopen = () => { if (!stopped) setImuConn("CONNECTED"); };
+        es.onmessage = (e) => {
+          if (stopped) return;
+          try { setFromPayload(JSON.parse(e.data)); } catch { }
+        };
+        es.onerror = () => {
+          if (stopped) return;
+          try { es?.close(); } catch { }
+          es = null;
+          if (!pollId) startPolling();
+        };
+      } catch {
+        startPolling();
+      }
+    };
 
-  const startSSE = () => {
-    try {
-      es = new EventSource(`${API_BASE}/api/imu/stream`);
-      es.onopen = () => { if (!stopped) setImuConn("CONNECTED"); };
-      es.onmessage = (e) => {
-        if (stopped) return;
-        try { setFromPayload(JSON.parse(e.data)); } catch {}
-      };
-      es.onerror = () => {
-        if (stopped) return;
-        try { es?.close(); } catch {}
-        es = null;
-        if (!pollId) startPolling();
-      };
-    } catch {
-      startPolling();
-    }
-  };
+    startSSE();
 
-  startSSE();
-
-  return () => {
-    stopped = true;
-    try { es?.close(); } catch {}
-    if (pollId) window.clearInterval(pollId);
-  };
-}, [API_BASE]);
+    return () => {
+      stopped = true;
+      try { es?.close(); } catch { }
+      if (pollId) window.clearInterval(pollId);
+    };
+  }, [API_BASE]);
 
   // REALTIME PRESSURE (SSE -> fallback polling)
   useEffect(() => {
