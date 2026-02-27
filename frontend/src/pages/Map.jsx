@@ -30,35 +30,35 @@ function haversineMeters(a, b) {
   const R = 6371000, toR = x => x * Math.PI / 180
   const dLat = toR(b[0] - a[0]), dLon = toR(b[1] - a[1])
   const lat1 = toR(a[0]), lat2 = toR(b[0])
-  const h = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2
-  return 2*R*Math.asin(Math.sqrt(h))
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2
+  return 2 * R * Math.asin(Math.sqrt(h))
 }
-function bearingDeg(a,b){
-  const toR=x=>x*Math.PI/180, toD=x=>x*180/Math.PI
-  const lat1=toR(a[0]), lat2=toR(b[0]), dLon=toR(b[1]-a[1])
-  const y=Math.sin(dLon)*Math.cos(lat2)
-  const x=Math.cos(lat1)*Math.sin(lat2)-Math.sin(lat1)*Math.cos(lat2)*Math.cos(dLon)
-  return (toD(Math.atan2(y,x))+360)%360
+function bearingDeg(a, b) {
+  const toR = x => x * Math.PI / 180, toD = x => x * 180 / Math.PI
+  const lat1 = toR(a[0]), lat2 = toR(b[0]), dLon = toR(b[1] - a[1])
+  const y = Math.sin(dLon) * Math.cos(lat2)
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon)
+  return (toD(Math.atan2(y, x)) + 360) % 360
 }
-function toRad(d){return d*Math.PI/180}
-function toDeg(r){return r*180/Math.PI}
+function toRad(d) { return d * Math.PI / 180 }
+function toDeg(r) { return r * 180 / Math.PI }
 function destinationLatLon(lat, lon, bearingDeg, distanceMeters) {
   const R = 6371000
   const δ = distanceMeters / R
   const θ = toRad(bearingDeg)
   const φ1 = toRad(lat)
   const λ1 = toRad(lon)
-  const φ2 = Math.asin(Math.sin(φ1)*Math.cos(δ) + Math.cos(φ1)*Math.sin(δ)*Math.cos(θ))
-  const λ2 = λ1 + Math.atan2(Math.sin(θ)*Math.sin(δ)*Math.cos(φ1),
-                              Math.cos(δ) - Math.sin(φ1)*Math.sin(φ2))
-  return { lat: toDeg(φ2), lon: ((toDeg(λ2)+540)%360)-180 }
+  const φ2 = Math.asin(Math.sin(φ1) * Math.cos(δ) + Math.cos(φ1) * Math.sin(δ) * Math.cos(θ))
+  const λ2 = λ1 + Math.atan2(Math.sin(θ) * Math.sin(δ) * Math.cos(φ1),
+    Math.cos(δ) - Math.sin(φ1) * Math.sin(φ2))
+  return { lat: toDeg(φ2), lon: ((toDeg(λ2) + 540) % 360) - 180 }
 }
 
 // Build a sector polygon for a given center, heading, half-angle and range (meters)
-function sectorPolygon(center, headingDeg, halfAngleDeg, rangeMeters, steps=24) {
+function sectorPolygon(center, headingDeg, halfAngleDeg, rangeMeters, steps = 24) {
   if (!center) return null
   const { lat, lon } = center
-  const coords = [[lat, lon]] // start at center
+  const coords = [[lat, lon]]
   const start = headingDeg - halfAngleDeg
   const end = headingDeg + halfAngleDeg
   const step = (end - start) / steps
@@ -67,11 +67,22 @@ function sectorPolygon(center, headingDeg, halfAngleDeg, rangeMeters, steps=24) 
     const p = destinationLatLon(lat, lon, brg, rangeMeters)
     coords.push([p.lat, p.lon])
   }
-  coords.push([lat, lon]) // close back to center
+  coords.push([lat, lon])
   return coords
 }
 
-// ---- Leaflet icons (using DivIcon for colored markers without image files) ----
+function parseNum(s) {
+  const n = Number(String(s).trim())
+  return Number.isFinite(n) ? n : null
+}
+function clampLatLon(lat, lon) {
+  if (lat == null || lon == null) return { ok: false, error: 'Enter both lat and lon.' }
+  if (lat < -90 || lat > 90) return { ok: false, error: 'Latitude must be between -90 and 90.' }
+  if (lon < -180 || lon > 180) return { ok: false, error: 'Longitude must be between -180 and 180.' }
+  return { ok: true }
+}
+
+// ---- Leaflet icons ----
 const mortarIcon = new L.DivIcon({
   className: 'custom-marker',
   html: '<div style="background-color:#4CAF50;width:24px;height:24px;border-radius:50%;border:3px solid white;box-shadow:0 2px 4px rgba(0,0,0,0.3);"></div>',
@@ -92,14 +103,14 @@ function ClickToSetTarget({ setTarget }) {
 }
 function Recenter({ center }) {
   const map = useMap()
-  useEffect(()=>{ if(center) map.setView(center) }, [center, map])
+  useEffect(() => { if (center) map.setView(center) }, [center, map])
   return null
 }
 
 // =================== Main Page ===================
 export default function MapPage() {
-  const [mortar, setMortar] = useState(null)   // launcher position
-  const [target, setTarget] = useState(null)   // impact position
+  const [mortar, setMortar] = useState(null)
+  const [target, setTarget] = useState(null)
   const [dms, setDms] = useState(false)
   const [autoCenter, setAutoCenter] = useState(true)
   const [cameraMode, setCameraMode] = useState(false)
@@ -107,44 +118,67 @@ export default function MapPage() {
   const holdTimer = useRef(null)
   const holdStart = useRef(null)
 
-  // ---- Facing / Sector config ----
-  const TOTAL_SPREAD_DEG = 25         // 25° total (±12.5°)
-  const HALF_SPREAD_DEG = TOTAL_SPREAD_DEG / 2
-  const SECTOR_RANGE_M = 500          // visible range of sector on map (tweak as you like)
+  // NEW: manual inputs
+  const [mLat, setMLat] = useState('')
+  const [mLon, setMLon] = useState('')
+  const [tLat, setTLat] = useState('')
+  const [tLon, setTLon] = useState('')
+  const [manualErr, setManualErr] = useState('')
 
-  // TODO(compass): Replace this derived heading with live compass heading when available.
-  // For now:
-  // - If a target exists, use bearing(mortar -> target)
-  // - Else default to 0° (north)
-  const headingDeg = useMemo(()=>{
-    if (mortar && target) return bearingDeg([mortar.lat, mortar.lon],[target.lat, target.lon])
+  // ---- Facing / Sector config ----
+  const TOTAL_SPREAD_DEG = 25
+  const HALF_SPREAD_DEG = TOTAL_SPREAD_DEG / 2
+  const SECTOR_RANGE_M = 500
+
+  const headingDeg = useMemo(() => {
+    if (mortar && target) return bearingDeg([mortar.lat, mortar.lon], [target.lat, target.lon])
     return 0
   }, [mortar, target])
 
-  // Build sector polygon points (light red wedge)
-  const sector = useMemo(()=>{
+  const sector = useMemo(() => {
     if (!mortar) return null
     return sectorPolygon(mortar, headingDeg, HALF_SPREAD_DEG, SECTOR_RANGE_M)
   }, [mortar, headingDeg])
 
   // ---- Derived values ----
-  const center = mortar ? [mortar.lat, mortar.lon] : [45.5017, -73.5673] // Montréal default
-  const path = useMemo(()=> (mortar && target) ? [[mortar.lat, mortar.lon], [target.lat, target.lon]] : null, [mortar, target])
-  const dist = useMemo(()=> (mortar && target) ? haversineMeters([mortar.lat,mortar.lon],[target.lat,target.lon]) : null, [mortar,target])
+  const center = mortar ? [mortar.lat, mortar.lon] : [45.5017, -73.5673]
+  const path = useMemo(() => (mortar && target) ? [[mortar.lat, mortar.lon], [target.lat, target.lon]] : null, [mortar, target])
+  const dist = useMemo(() => (mortar && target) ? haversineMeters([mortar.lat, mortar.lon], [target.lat, target.lon]) : null, [mortar, target])
 
   // ---- Actions ----
-  function setMortarByDeviceGeolocation(){
+  function setMortarByDeviceGeolocation() {
     if (!navigator.geolocation) { alert('Geolocation not supported'); return }
-    navigator.geolocation.getCurrentPosition(pos=>{
+    navigator.geolocation.getCurrentPosition(pos => {
       const { latitude: lat, longitude: lon } = pos.coords
       setMortar({ lat, lon })
-    }, err=> alert('Unable to get device position: ' + err.message), { enableHighAccuracy:true, timeout:10000 })
+      setMLat(lat.toFixed(6))
+      setMLon(lon.toFixed(6))
+      setManualErr('')
+    }, err => alert('Unable to get device position: ' + err.message), { enableHighAccuracy: true, timeout: 10000 })
   }
 
-  function copyCoords(obj){
+  function applyManualMortar() {
+    const lat = parseNum(mLat)
+    const lon = parseNum(mLon)
+    const ok = clampLatLon(lat, lon)
+    if (!ok.ok) { setManualErr(ok.error); return }
+    setMortar({ lat, lon })
+    setManualErr('')
+  }
+
+  function applyManualTarget() {
+    const lat = parseNum(tLat)
+    const lon = parseNum(tLon)
+    const ok = clampLatLon(lat, lon)
+    if (!ok.ok) { setManualErr(ok.error); return }
+    setTarget({ lat, lon })
+    setManualErr('')
+  }
+
+  function copyCoords(obj) {
     if (!obj) return
     const text = `${obj.lat.toFixed(6)}, ${obj.lon.toFixed(6)}`
-    navigator.clipboard?.writeText(text).then(()=>alert('Copied: '+text)).catch(()=>alert('Copy failed'))
+    navigator.clipboard?.writeText(text).then(() => alert('Copied: ' + text)).catch(() => alert('Copy failed'))
   }
 
   // ---- Arm & Launch flow ----
@@ -165,7 +199,7 @@ export default function MapPage() {
 
     setHoldProgress(0)
     holdStart.current = Date.now()
-    holdTimer.current = setInterval(async ()=>{
+    holdTimer.current = setInterval(async () => {
       const elapsed = Date.now() - holdStart.current
       const progress = Math.min(1, elapsed / 2000)
       setHoldProgress(progress)
@@ -194,32 +228,75 @@ export default function MapPage() {
   return (
     <div className="card">
       {/* Top controls */}
-      <div style={{display:'flex', gap:8, flexWrap:'wrap', marginBottom:8}}>
-        <button className="btn" onClick={()=>setDms(v=>!v)}>{dms? 'DMS' : 'Decimal'}</button>
-        <button className="btn" onClick={()=>setAutoCenter(v=>!v)}>{autoCenter? 'Auto-center ON' : 'Auto-center OFF'}</button>
-        <button className="btn ghost" onClick={()=>{ setMortar(null); setTarget(null) }}>Clear All</button>
-        <div style={{marginLeft:'auto', display:'flex', gap:8}}>
-          <button className="btn" onClick={()=>setCameraMode(true)}>Use Camera to Aim</button>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+        <button className="btn" onClick={() => setDms(v => !v)}>{dms ? 'DMS' : 'Decimal'}</button>
+        <button className="btn" onClick={() => setAutoCenter(v => !v)}>{autoCenter ? 'Auto-center ON' : 'Auto-center OFF'}</button>
+        <button className="btn ghost" onClick={() => { setMortar(null); setTarget(null); setManualErr('') }}>Clear All</button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+          <button className="btn" onClick={() => setCameraMode(true)}>Use Camera to Aim</button>
           <button className="btn" onClick={setMortarByDeviceGeolocation}>Use device for Mortar</button>
         </div>
       </div>
 
+      {/* NEW: Manual input row */}
+      <div className="card" style={{ padding: 12, marginBottom: 10 }}>
+        <div className="label" style={{ marginBottom: 8 }}>Manual GPS (when phone GPS is bad)</div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: 8, alignItems: 'end' }}>
+          <div>
+            <div className="kpi-sub">Mortar Lat</div>
+            <input className="input" value={mLat} onChange={e => setMLat(e.target.value)} placeholder="45.501700" />
+          </div>
+          <div>
+            <div className="kpi-sub">Mortar Lon</div>
+            <input className="input" value={mLon} onChange={e => setMLon(e.target.value)} placeholder="-73.567300" />
+          </div>
+          <button className="btn" onClick={applyManualMortar}>Set Mortar</button>
+          <button className="btn ghost" onClick={() => { setMLat(''); setMLon(''); }}>Clear</button>
+        </div>
+
+        <div style={{ height: 10 }} />
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto auto', gap: 8, alignItems: 'end' }}>
+          <div>
+            <div className="kpi-sub">Target Lat</div>
+            <input className="input" value={tLat} onChange={e => setTLat(e.target.value)} placeholder="45.502000" />
+          </div>
+          <div>
+            <div className="kpi-sub">Target Lon</div>
+            <input className="input" value={tLon} onChange={e => setTLon(e.target.value)} placeholder="-73.566800" />
+          </div>
+          <button className="btn" onClick={applyManualTarget}>Set Target</button>
+          <button className="btn ghost" onClick={() => { setTLat(''); setTLon(''); }}>Clear</button>
+        </div>
+
+        {manualErr ? (
+          <div className="kpi-sub" style={{ marginTop: 8, color: 'var(--danger)' }}>
+            {manualErr}
+          </div>
+        ) : null}
+      </div>
+
       {/* Map */}
-      <div style={{height:'70vh'}}>
-        <MapContainer center={center} zoom={16} style={{height:'100%', width:'100%'}} minZoom={2} maxZoom={19}>
+      <div style={{ height: '70vh' }}>
+        <MapContainer center={center} zoom={16} style={{ height: '100%', width: '100%' }} minZoom={2} maxZoom={19}>
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" attribution="&copy; OpenStreetMap contributors" maxZoom={19} />
-          {autoCenter && <Recenter center={center}/>}
-          <ClickToSetTarget setTarget={setTarget} />
+          {autoCenter && <Recenter center={center} />}
+          <ClickToSetTarget setTarget={(t) => { setTarget(t); setTLat(t.lat.toFixed(6)); setTLon(t.lon.toFixed(6)); }} />
 
           {/* Mortar marker (draggable) */}
           {mortar && (
             <Marker
               position={[mortar.lat, mortar.lon]}
               draggable
-              eventHandlers={{ dragend: (e) => {
-                const p = e.target.getLatLng()
-                setMortar({ lat: p.lat, lon: p.lng })
-              }}}
+              eventHandlers={{
+                dragend: (e) => {
+                  const p = e.target.getLatLng()
+                  setMortar({ lat: p.lat, lon: p.lng })
+                  setMLat(p.lat.toFixed(6))
+                  setMLon(p.lng.toFixed(6))
+                }
+              }}
               icon={mortarIcon}
             />
           )}
@@ -229,18 +306,20 @@ export default function MapPage() {
             <Marker
               position={[target.lat, target.lon]}
               draggable
-              eventHandlers={{ dragend: (e) => {
-                const p = e.target.getLatLng()
-                setTarget({ lat: p.lat, lon: p.lng })
-              }}}
+              eventHandlers={{
+                dragend: (e) => {
+                  const p = e.target.getLatLng()
+                  setTarget({ lat: p.lat, lon: p.lng })
+                  setTLat(p.lat.toFixed(6))
+                  setTLon(p.lng.toFixed(6))
+                }
+              }}
               icon={targetIcon}
             />
           )}
 
-          {/* Line */}
           {path && <Polyline positions={path} color="#ffcc00" weight={3} dashArray="6 6" />}
 
-          {/* Facing sector (light red) */}
           {sector && (
             <Polygon
               positions={sector}
@@ -251,38 +330,42 @@ export default function MapPage() {
       </div>
 
       {/* Readouts */}
-      <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginTop:12}}>
-        <div className="card" style={{padding:12}}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 12 }}>
+        <div className="card" style={{ padding: 12 }}>
           <div className="label">Mortar (launcher)</div>
-          <div style={{fontWeight:700}}>{mortar ? (dms ? toDMS(mortar.lat, mortar.lon) : fmtLatLon(mortar.lat, mortar.lon)) : '—'}</div>
-          <div style={{marginTop:8, display:'flex', gap:8}}>
-            <button className="btn ghost" onClick={()=>copyCoords(mortar)}>Copy</button>
-            <button className="btn ghost" onClick={()=>setMortar(null)}>Clear</button>
+          <div style={{ fontWeight: 700 }}>
+            {mortar ? (dms ? toDMS(mortar.lat, mortar.lon) : fmtLatLon(mortar.lat, mortar.lon)) : '—'}
+          </div>
+          <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+            <button className="btn ghost" onClick={() => copyCoords(mortar)}>Copy</button>
+            <button className="btn ghost" onClick={() => setMortar(null)}>Clear</button>
           </div>
         </div>
 
-        <div className="card" style={{padding:12}}>
+        <div className="card" style={{ padding: 12 }}>
           <div className="label">Target</div>
-          <div style={{fontWeight:700}}>{target ? (dms ? toDMS(target.lat, target.lon) : fmtLatLon(target.lat, target.lon)) : '—'}</div>
-          <div style={{marginTop:8, display:'flex', gap:8}}>
-            <button className="btn ghost" onClick={()=>copyCoords(target)}>Copy</button>
-            <button className="btn ghost" onClick={()=>setTarget(null)}>Clear</button>
+          <div style={{ fontWeight: 700 }}>
+            {target ? (dms ? toDMS(target.lat, target.lon) : fmtLatLon(target.lat, target.lon)) : '—'}
           </div>
-          <hr style={{border:'none', borderTop:'1px solid var(--border)', margin:'12px 0'}}/>
-          <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8}}>
-            <div><div className="kpi">{dist ? dist.toFixed(1)+' m' : '—'}</div><div className="kpi-sub">Distance</div></div>
-            <div><div className="kpi">{(mortar&&target)? bearingDeg([mortar.lat,mortar.lon],[target.lat,target.lon]).toFixed(1)+'°' : '—'}</div><div className="kpi-sub">Bearing</div></div>
+          <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+            <button className="btn ghost" onClick={() => copyCoords(target)}>Copy</button>
+            <button className="btn ghost" onClick={() => setTarget(null)}>Clear</button>
+          </div>
+          <hr style={{ border: 'none', borderTop: '1px solid var(--border)', margin: '12px 0' }} />
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            <div><div className="kpi">{dist ? dist.toFixed(1) + ' m' : '—'}</div><div className="kpi-sub">Distance</div></div>
+            <div><div className="kpi">{(mortar && target) ? bearingDeg([mortar.lat, mortar.lon], [target.lat, target.lon]).toFixed(1) + '°' : '—'}</div><div className="kpi-sub">Bearing</div></div>
           </div>
         </div>
 
-        <div className="card" style={{padding:12}}>
+        <div className="card" style={{ padding: 12 }}>
           <div className="label">Arm & Fire</div>
-          <div style={{display:'flex', gap:12, alignItems:'center', marginTop:8}}>
-            <div style={{flex:1}}>
-              <div style={{height:14, borderRadius:8, background:'#2b2b2b'}}>
-                <div style={{width: `${holdProgress*100}%`, height:'100%', background:'linear-gradient(90deg,#ff9900,#ff3d00)', borderRadius:8}} />
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 8 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ height: 14, borderRadius: 8, background: '#2b2b2b' }}>
+                <div style={{ width: `${holdProgress * 100}%`, height: '100%', background: 'linear-gradient(90deg,#ff9900,#ff3d00)', borderRadius: 8 }} />
               </div>
-              <div className="kpi-sub" style={{marginTop:6}}>Hold 2 seconds to arm, then confirm to fire.</div>
+              <div className="kpi-sub" style={{ marginTop: 6 }}>Hold 2 seconds to arm, then confirm to fire.</div>
             </div>
             <button
               onMouseDown={startHold}
@@ -291,7 +374,7 @@ export default function MapPage() {
               onMouseLeave={cancelHold}
               onTouchEnd={cancelHold}
               className="btn"
-              style={{padding:'12px 16px'}}
+              style={{ padding: '12px 16px' }}
               title="Hold 2s to fire"
             >
               HOLD & FIRE
@@ -303,16 +386,16 @@ export default function MapPage() {
       {/* Camera overlay */}
       {cameraMode && (
         <div style={{
-          position:'fixed', inset:12, zIndex:9999,
-          background:'rgba(0,0,0,.6)', backdropFilter:'blur(2px)',
-          display:'grid', placeItems:'center'
+          position: 'fixed', inset: 12, zIndex: 9999,
+          background: 'rgba(0,0,0,.6)', backdropFilter: 'blur(2px)',
+          display: 'grid', placeItems: 'center'
         }}>
-          <div style={{maxWidth:1000, width:'100%'}}>
+          <div style={{ maxWidth: 1000, width: '100%' }}>
             <CameraAim
-              mortarPos={mortar /* if null, falls back to device GPS */}
+              mortarPos={mortar}
               defaultDistanceMeters={150}
-              onCancel={()=>setCameraMode(false)}
-              onConfirm={(coords)=>{ setTarget(coords); setCameraMode(false)}}
+              onCancel={() => setCameraMode(false)}
+              onConfirm={(coords) => { setTarget(coords); setCameraMode(false) }}
             />
           </div>
         </div>
