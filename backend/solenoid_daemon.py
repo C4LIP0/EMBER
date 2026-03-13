@@ -9,7 +9,7 @@ except Exception as e:
 
 SHOOT = 23     # BCM
 RELEASE = 24   # BCM
-ACTIVE_LOW = True  # your MOSFET board (OFF=1, ON=0)
+ACTIVE_LOW = False  # your MOSFET board (OFF=1, ON=0)
 
 def level_for(on: bool) -> int:
     return 0 if (ACTIVE_LOW and on) else 1 if ACTIVE_LOW else (1 if on else 0)

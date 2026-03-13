@@ -1,18 +1,28 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
+console.log("ENV check:", {
+  TIC_YAW_SERIAL: process.env.TIC_YAW_SERIAL,
+  TIC_PITCH_SERIAL: process.env.TIC_PITCH_SERIAL,
+});
 import { createRequire } from "module";
 import { solenoids } from "./solenoids.js";
 import * as pressure from "./pressure.js";
 import * as imu from "./imu.js";
 import * as steppers from "./steppers.js";
-dotenv.config();
-
+import * as anemometer from "./anemometer.js";
+//Testing
+console.log("ENV yaw:", process.env.TIC_YAW_SERIAL);
+console.log("ENV pitch:", process.env.TIC_PITCH_SERIAL);
 const app = express();
 app.use(cors());
 app.use(express.json());
 const PORT = process.env.PORT || 8080;
-
+//I add this
+//const ENABLE_PRESSURE = String(process.env.ENABLE_PRESSURE || "0") === "1";
+//const ENABLE_IMU = String(process.env.ENABLE_IMU || "0") === "1";
+//const ENABLE_DOOR = String(process.env.ENABLE_DOOR || "0") === "1";
 // ----------------------------
 // Your existing mock sensors
 // ----------------------------
@@ -23,13 +33,6 @@ let sensors = [
     temperatureC: 21.3,
     humidity: 41,
     pressureHpa: 1009.2,
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: "Anemometer",
-    type: "Wind",
-    windSpeedMs: 4.2,
-    windDirDeg: 30,
     updatedAt: new Date().toISOString(),
   },
   {
@@ -46,7 +49,7 @@ let sensors = [
 // Door sensor config
 // ----------------------------
 const DOOR_PIN = Number(process.env.DOOR_PIN || 17);        // BCM GPIO (default 17)
-const DOOR_GLITCH_US = Number(process.env.DOOR_GLITCH_US || 5000); // debounce in µs
+const DOOR_GLITCH_US = Number(process.env.DOOR_GLITCH_US || 5000); // debounce in Âµs
 
 // Add a door sensor entry to your sensors array
 function upsertDoorSensor(payload) {
@@ -127,7 +130,7 @@ async function initDoorSensor() {
 initDoorSensor();
 // kick it off
 // ----------------------------
-// Solenoids setup 
+// Solenoids setup
 // ----------------------------
 solenoids.init();
 
@@ -324,7 +327,41 @@ app.get("/api/imu/stream", (req, res) => {
     imuClients.delete(res);
   });
 });
+// ----------------------------
+// Anemometer setup
+// ----------------------------
 
+const anemometerClients = new Set();
+
+anemometer.init({
+  onUpdate: (reading) => {
+    const payload = `data: ${JSON.stringify(reading)}\n\n`;
+    for (const res of anemometerClients) {
+      try { res.write(payload); } catch {}
+    }
+  },
+});
+
+app.get("/api/anemometer/latest", (req, res) => {
+  const r = anemometer.latest();
+  if (!r) return res.status(503).json({ ok: false, error: "No reading yet" });
+  res.json({ ok: true, ...r });
+});
+
+app.get("/api/anemometer/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
+  res.write("retry: 1000\n\n");
+  anemometerClients.add(res);
+
+  const r = anemometer.latest();
+  if (r) res.write(`data: ${JSON.stringify(r)}\n\n`);
+
+  req.on("close", () => anemometerClients.delete(res));
+});
 
 // ----------------------------
 // Existing endpoints
@@ -334,6 +371,15 @@ app.get("/api/health", (_req, res) =>
 );
 
 app.get("/api/sensors", (_req, res) => {
+  const anemo = anemometer.latest?.() || null;
+out.push({
+  id: "Anemometer",
+  type: "Wind",
+  updatedAt: anemo?.ts ? new Date(anemo.ts).toISOString() : null,
+  windSpeedMs:  anemo?.ms  ?? null,
+  windSpeedKmh: anemo?.kmh ?? null,
+  windVoltage:  anemo?.v   ?? null,
+});
   const nowIso = new Date().toISOString();
 
   const out = sensors.map((s) => ({ ...s }));
