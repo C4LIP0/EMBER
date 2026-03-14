@@ -514,23 +514,24 @@ export default function ManualControl() {
         {/* ── IMU card ── */}
         <div className="mc-card">
           <div className="mc-card-title">IMU (BNO055)</div>
-          <div className="mc-muted">Stream: <span className="mc-muted">{imuConn}</span></div>
-          <div style={{ fontSize: 18, fontWeight: 800, marginTop: 8 }}>
-            {imuState.aligned == null ? "ALIGN: --" : imuState.aligned ? "ALIGN: OK" : "ALIGN: OFF"}
+
+          {/* Heading */}
+          <div className="mc-muted" style={{ marginTop: 8, fontSize: 12 }}>Heading</div>
+          <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.0 }}>
+            {imuState.heading == null ? "--" : `${imuState.heading.toFixed(1)}°`}
           </div>
-          <div className="mc-muted" style={{ marginTop: 6 }}>
-            Heading: {imuState.heading == null ? "--" : imuState.heading.toFixed(1)} deg<br />
-            Roll:    {imuState.roll    == null ? "--" : imuState.roll.toFixed(1)} deg<br />
-            Pitch:   {imuState.pitch   == null ? "--" : imuState.pitch.toFixed(1)} deg
+
+          {/* Pitch */}
+          <div className="mc-muted" style={{ marginTop: 12, fontSize: 12 }}>Pitch</div>
+          <div style={{ fontSize: 34, fontWeight: 900, lineHeight: 1.0 }}>
+            {imuState.pitch == null ? "--" : `${imuState.pitch.toFixed(1)}°`}
           </div>
-          <div className="mc-muted" style={{ marginTop: 6 }}>
-            Calib SYS/G/A/M:{" "}
-            {imuState.calib
-              ? `${imuState.calib.sys}/${imuState.calib.g}/${imuState.calib.a}/${imuState.calib.m}`
-              : "--"}
-          </div>
-          <div className="mc-muted" style={{ marginTop: 6 }}>
+
+          <div className="mc-muted" style={{ marginTop: 10 }}>
             Updated: {imuState.ts ? new Date(imuState.ts).toLocaleTimeString() : "--"}
+          </div>
+          <div className="mc-hint" style={{ marginTop: 4 }}>
+            Stream: <span className="mc-muted">{imuConn}</span>
           </div>
         </div>
 

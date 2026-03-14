@@ -1,25 +1,26 @@
+/**
+ * pressure.js — Node.js wrapper for pressure_reader.py
+ * Sensor: AUTEX 150 PSI, 0.5V–4.5V ratiometric on 5V
+ * ADS1115 channel: A0
+ */
+
 import { spawn } from "child_process";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const __dirname  = path.dirname(__filename);
 
-let proc = null;
-let last = null;
-let buf = "";
+let proc      = null;
+let last      = null;
+let buf       = "";
 let onUpdateCb = null;
 
 function pickPython() {
-  // Prefer explicit env var
   if (process.env.PRESSURE_PYTHON) return process.env.PRESSURE_PYTHON;
-
-  // Prefer backend venv if present
   const venvPy = path.join(__dirname, ".venv", "bin", "python");
   if (fs.existsSync(venvPy)) return venvPy;
-
-  // Fallback
   return "python3";
 }
 
@@ -28,15 +29,20 @@ export function init({ onUpdate } = {}) {
   onUpdateCb = typeof onUpdate === "function" ? onUpdate : null;
 
   const script = path.join(__dirname, "pressure_reader.py");
-  const py = pickPython();
+  const py     = pickPython();
 
   proc = spawn(py, [script], {
     env: {
       ...process.env,
-      PRESSURE_ADS_ADDR: process.env.PRESSURE_ADS_ADDR || "0x48",
+      // AUTEX 150 PSI sensor — 0.5V @ 0 PSI, 4.5V @ 150 PSI
+      PRESSURE_ADS_ADDR:      process.env.PRESSURE_ADS_ADDR      || "0x48",
       PRESSURE_DIVIDER_RATIO: process.env.PRESSURE_DIVIDER_RATIO || "0.6667",
-      PRESSURE_P_MAX: process.env.PRESSURE_P_MAX || "300.0",
-      PRESSURE_SAMPLE_PERIOD: process.env.PRESSURE_SAMPLE_PERIOD || "0.2",
+      PRESSURE_V_MIN:         process.env.PRESSURE_V_MIN         || "0.5",
+      PRESSURE_V_MAX:         process.env.PRESSURE_V_MAX         || "4.5",
+      PRESSURE_P_MIN:         process.env.PRESSURE_P_MIN         || "0.0",
+      PRESSURE_P_MAX:         process.env.PRESSURE_P_MAX         || "150.0",
+      PRESSURE_SAMPLE_PERIOD: process.env.PRESSURE_SAMPLE_PERIOD || "0.5",
+      PRESSURE_AVERAGE_N:     process.env.PRESSURE_AVERAGE_N     || "8",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -44,6 +50,7 @@ export function init({ onUpdate } = {}) {
   proc.on("error", (err) => {
     console.error("[pressure] spawn error:", err);
     proc = null;
+    setTimeout(() => init({ onUpdate: onUpdateCb }), 3000);
   });
 
   proc.stdout.setEncoding("utf8");
@@ -54,11 +61,17 @@ export function init({ onUpdate } = {}) {
       const line = buf.slice(0, idx).trim();
       buf = buf.slice(idx + 1);
       if (!line) continue;
-
       try {
         const obj = JSON.parse(line);
-        last = obj;
-        if (onUpdateCb) onUpdateCb(obj);
+        // Only update last if it's a real reading (not error/no_reading)
+        if (obj.status === "ok" || obj.psi != null) {
+          last = obj;
+          onUpdateCb?.(obj);
+        }
+        // Log errors but don't crash
+        if (obj.status === "error") {
+          console.error("[pressure_reader.py] error:", obj.error);
+        }
       } catch {
         // ignore non-json lines
       }
@@ -73,6 +86,8 @@ export function init({ onUpdate } = {}) {
   proc.on("exit", (code, signal) => {
     console.error("[pressure] python exited", { code, signal });
     proc = null;
+    // Auto-restart after 3s
+    setTimeout(() => init({ onUpdate: onUpdateCb }), 3000);
   });
 
   console.log("[pressure] started:", { py, script });
