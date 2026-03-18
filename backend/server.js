@@ -1,270 +1,159 @@
 import express from "express";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
+
 console.log("ENV check:", {
-  TIC_YAW_SERIAL: process.env.TIC_YAW_SERIAL,
+  TIC_YAW_SERIAL:   process.env.TIC_YAW_SERIAL,
   TIC_PITCH_SERIAL: process.env.TIC_PITCH_SERIAL,
 });
+
 import { createRequire } from "module";
-import { solenoids } from "./solenoids.js";
-import * as pressure from "./pressure.js";
-import * as imu from "./imu.js";
-import * as steppers from "./steppers.js";
+import { solenoids }   from "./solenoids.js";
+import * as pressure   from "./pressure.js";
+import * as imu        from "./imu.js";
+import * as steppers   from "./steppers.js";
 import * as anemometer from "./anemometer.js";
-//Testing
-console.log("ENV yaw:", process.env.TIC_YAW_SERIAL);
-console.log("ENV pitch:", process.env.TIC_PITCH_SERIAL);
-const app = express();
+import * as autoAim    from "./autoAim.js";
+import * as autoFire   from "./autoFire.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname  = path.dirname(__filename);
+
+const app  = express();
+const PORT = process.env.PORT || 8080;
+
 app.use(cors());
 app.use(express.json());
-const PORT = process.env.PORT || 8080;
-//I add this
-//const ENABLE_PRESSURE = String(process.env.ENABLE_PRESSURE || "0") === "1";
-//const ENABLE_IMU = String(process.env.ENABLE_IMU || "0") === "1";
-//const ENABLE_DOOR = String(process.env.ENABLE_DOOR || "0") === "1";
-// ----------------------------
-// Your existing mock sensors
-// ----------------------------
+
+// ── Serve built frontend ──────────────────────────────────────────────────
+const DIST = path.join(__dirname, "../frontend/dist");
+app.use(express.static(DIST));
+
+// ── Serve offline map tiles ───────────────────────────────────────────────
+app.use("/tiles", express.static(path.join(__dirname, "../tiles")));
+
+// ── Mock sensors ──────────────────────────────────────────────────────────
 let sensors = [
-  {
-    id: "BME280",
-    type: "Env",
-    temperatureC: 21.3,
-    humidity: 41,
-    pressureHpa: 1009.2,
-    updatedAt: new Date().toISOString(),
-  },
-  {
-    id: "GPS",
-    type: "Position",
-    lat: 45.5017,
-    lon: -73.5673,
-    altM: 35,
-    updatedAt: new Date().toISOString(),
-  },
+  { id: "BME280", type: "Env", temperatureC: 21.3, humidity: 41, pressureHpa: 1009.2, updatedAt: new Date().toISOString() },
+  { id: "GPS",    type: "Position", lat: 45.5017, lon: -73.5673, altM: 35, updatedAt: new Date().toISOString() },
 ];
 
-// ----------------------------
-// Door sensor config
-// ----------------------------
-const DOOR_PIN = Number(process.env.DOOR_PIN || 17);        // BCM GPIO (default 17)
-const DOOR_GLITCH_US = Number(process.env.DOOR_GLITCH_US || 5000); // debounce in Âµs
+// ── Door sensor ───────────────────────────────────────────────────────────
+const DOOR_PIN       = Number(process.env.DOOR_PIN       || 17);
+const DOOR_GLITCH_US = Number(process.env.DOOR_GLITCH_US || 5000);
 
-// Add a door sensor entry to your sensors array
 function upsertDoorSensor(payload) {
   const now = new Date().toISOString();
-  const idx = sensors.findIndex((s) => s.id === "DoorContact");
-  const base = {
-    id: "DoorContact",
-    type: "Contact",
-    updatedAt: now,
-    ...payload,
-  };
-
+  const idx = sensors.findIndex(s => s.id === "DoorContact");
+  const base = { id: "DoorContact", type: "Contact", updatedAt: now, ...payload };
   if (idx === -1) sensors.push(base);
   else sensors[idx] = { ...sensors[idx], ...base, updatedAt: now };
 }
 
-// Initialize with unknown until pigpio starts
 upsertDoorSensor({ level: null, isOpen: null, state: "UNKNOWN", pin: DOOR_PIN });
 
-// ----------------------------
-// pigpio setup (safe for ESM)
-// ----------------------------
 let doorGpio = null;
 
 async function initDoorSensor() {
   try {
     const require = createRequire(import.meta.url);
-    const pigpio = require("pigpio"); // CommonJS module
-    const { Gpio } = pigpio;
-
-    doorGpio = new Gpio(DOOR_PIN, {
-      mode: Gpio.INPUT,
-      pullUpDown: Gpio.PUD_UP, // internal pull-up (NC switch to GND)
-      alert: true,
-    });
-
-    // debounce/glitch filter
+    const { Gpio } = require("pigpio");
+    doorGpio = new Gpio(DOOR_PIN, { mode: Gpio.INPUT, pullUpDown: Gpio.PUD_UP, alert: true });
     doorGpio.glitchFilter(DOOR_GLITCH_US);
-
-    // Initial read
     let lastLevel = doorGpio.digitalRead();
-    const initialIsOpen = lastLevel === 1; // with pull-up + switch to GND: 0=closed, 1=open
-    upsertDoorSensor({
-      pin: DOOR_PIN,
-      level: lastLevel,
-      isOpen: initialIsOpen,
-      state: initialIsOpen ? "OPEN" : "CLOSED",
-      reason: "init",
-    });
-
-    console.log(
-      `[door] init GPIO${DOOR_PIN} level=${lastLevel} state=${initialIsOpen ? "OPEN" : "CLOSED"}`
-    );
-
-    doorGpio.on("alert", (level /* 0|1 */, tick) => {
+    const initialIsOpen = lastLevel === 1;
+    upsertDoorSensor({ pin: DOOR_PIN, level: lastLevel, isOpen: initialIsOpen, state: initialIsOpen ? "OPEN" : "CLOSED", reason: "init" });
+    console.log(`[door] init GPIO${DOOR_PIN} level=${lastLevel} state=${initialIsOpen ? "OPEN" : "CLOSED"}`);
+    doorGpio.on("alert", (level, tick) => {
       if (level === lastLevel) return;
       lastLevel = level;
-
       const isOpen = level === 1;
-      upsertDoorSensor({
-        pin: DOOR_PIN,
-        level,
-        isOpen,
-        state: isOpen ? "OPEN" : "CLOSED",
-        reason: "change",
-        tick,
-      });
-
-      console.log(`[door] ${isOpen ? "OPEN" : "CLOSED"} (GPIO=${level})`);
+      upsertDoorSensor({ pin: DOOR_PIN, level, isOpen, state: isOpen ? "OPEN" : "CLOSED", reason: "change", tick });
+      console.log(`[door] ${isOpen ? "OPEN" : "CLOSED"}`);
     });
   } catch (err) {
-    console.warn(
-      "[door] pigpio not available (or not running on Pi). Door sensor will stay in mock/UNKNOWN mode."
-    );
+    console.warn("[door] pigpio not available. Door sensor in UNKNOWN mode.");
     console.warn("[door] Error:", err?.message || err);
   }
 }
 initDoorSensor();
-// kick it off
-// ----------------------------
-// Solenoids setup
-// ----------------------------
+
+// ── Solenoids ─────────────────────────────────────────────────────────────
 solenoids.init();
 
-app.get("/api/solenoids/status", (req, res) => {
-  res.json(solenoids.status());
-});
+app.get("/api/solenoids/status", (req, res) => res.json(solenoids.status()));
 
 app.post("/api/solenoids/allOff", async (req, res) => {
-  try {
-    const status = await solenoids.allOff();
-    res.json({ ok: true, status });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() });
-  }
+  try { res.json({ ok: true, status: await solenoids.allOff() }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() }); }
 });
 
 app.post("/api/solenoids/shoot", async (req, res) => {
-  try {
-    const { on, pulseMs } = req.body || {};
-    const status = await solenoids.shoot({ on, pulseMs });
-    res.json({ ok: true, status });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() });
-  }
+  try { res.json({ ok: true, status: await solenoids.shoot(req.body || {}) }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() }); }
 });
 
 app.post("/api/solenoids/release", async (req, res) => {
-  try {
-    const { on, pulseMs } = req.body || {};
-    const status = await solenoids.release({ on, pulseMs });
-    res.json({ ok: true, status });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() });
-  }
+  try { res.json({ ok: true, status: await solenoids.release(req.body || {}) }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e), status: solenoids.status() }); }
 });
-// ----------------------------
-// Steppers (Pololu Tic T249)
-// ----------------------------
+
+// ── Steppers ──────────────────────────────────────────────────────────────
 app.get("/api/steppers/status", async (_req, res) => {
-  try {
-    const s = await steppers.statusAll();
-    res.json({ ok: true, ...s });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
+  try { res.json({ ok: true, ...await steppers.statusAll() }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
 });
 
 app.get("/api/steppers/yaw/status", async (_req, res) => {
-  try {
-    res.json(await steppers.statusAxis("yaw"));
-  } catch (e) {
-    res.status(500).json({ ok: false, axis: "yaw", error: String(e.message || e) });
-  }
+  try { res.json(await steppers.statusAxis("yaw")); }
+  catch (e) { res.status(500).json({ ok: false, axis: "yaw", error: String(e.message || e) }); }
 });
 
 app.get("/api/steppers/pitch/status", async (_req, res) => {
-  try {
-    res.json(await steppers.statusAxis("pitch"));
-  } catch (e) {
-    res.status(500).json({ ok: false, axis: "pitch", error: String(e.message || e) });
-  }
+  try { res.json(await steppers.statusAxis("pitch")); }
+  catch (e) { res.status(500).json({ ok: false, axis: "pitch", error: String(e.message || e) }); }
 });
 
-app.post("/api/steppers/enable", async (req, res) => {
-  try {
-    const { axis } = req.body || {};
-    const s = await steppers.enable(axis);
-    res.json({ ok: true, status: s });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
+app.post("/api/steppers/enable",  async (req, res) => {
+  try { res.json({ ok: true, status: await steppers.enable(req.body?.axis) }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
 });
 
 app.post("/api/steppers/disable", async (req, res) => {
-  try {
-    const { axis } = req.body || {};
-    const s = await steppers.disable(axis);
-    res.json({ ok: true, status: s });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
+  try { res.json({ ok: true, status: await steppers.disable(req.body?.axis) }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
 });
 
 app.post("/api/steppers/jog", async (req, res) => {
-  try {
-    const { axis, dir, speed01 } = req.body || {};
-    const r = await steppers.jog({ axis, dir, speed01 });
-    res.json(r);
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
+  try { const { axis, dir, speed01 } = req.body || {}; res.json(await steppers.jog({ axis, dir, speed01 })); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
 });
 
 app.post("/api/steppers/stop", async (req, res) => {
-  try {
-    const { axis } = req.body || {};
-    const r = await steppers.stop(axis);
-    res.json(r);
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
+  try { res.json(await steppers.stop(req.body?.axis)); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
 });
 
 app.post("/api/steppers/stopAll", async (_req, res) => {
-  try {
-    const r = await steppers.stopAll();
-    res.json({ ok: true, ...r });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
+  try { res.json({ ok: true, ...await steppers.stopAll() }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
 });
 
 app.post("/api/steppers/zero", async (req, res) => {
-  try {
-    const { axis } = req.body || {};
-    const s = await steppers.setZero(axis);
-    res.json({ ok: true, status: s });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
+  try { res.json({ ok: true, status: await steppers.setZero(req.body?.axis) }); }
+  catch (e) { res.status(500).json({ ok: false, error: String(e.message || e) }); }
 });
-// ----------------------------
-// Pressure sensor setup
-// ----------------------------
 
-
+// ── Pressure ──────────────────────────────────────────────────────────────
 const pressureClients = new Set();
 
 pressure.init({
   onUpdate: (reading) => {
     const payload = `data: ${JSON.stringify(reading)}\n\n`;
-    for (const res of pressureClients) {
-      try { res.write(payload); } catch {}
-    }
+    for (const res of pressureClients) { try { res.write(payload); } catch {} }
   },
 });
 
@@ -275,33 +164,24 @@ app.get("/api/pressure/latest", (req, res) => {
 });
 
 app.get("/api/pressure/stream", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Content-Type",  "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Connection",    "keep-alive");
   res.setHeader("Access-Control-Allow-Origin", "*");
-
   res.write("retry: 1000\n\n");
-
   pressureClients.add(res);
-
   const r = pressure.latest();
   if (r) res.write(`data: ${JSON.stringify(r)}\n\n`);
-
-  req.on("close", () => {
-    pressureClients.delete(res);
-  });
+  req.on("close", () => pressureClients.delete(res));
 });
-// ----------------------------
-// IMU (BNO055) setup
-// ----------------------------
+
+// ── IMU ───────────────────────────────────────────────────────────────────
 const imuClients = new Set();
 
 imu.init({
   onUpdate: (reading) => {
     const payload = `data: ${JSON.stringify(reading)}\n\n`;
-    for (const res of imuClients) {
-      try { res.write(payload); } catch {}
-    }
+    for (const res of imuClients) { try { res.write(payload); } catch {} }
   },
 });
 
@@ -312,33 +192,24 @@ app.get("/api/imu/latest", (req, res) => {
 });
 
 app.get("/api/imu/stream", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Content-Type",  "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Connection",    "keep-alive");
   res.setHeader("Access-Control-Allow-Origin", "*");
-
   res.write("retry: 1000\n\n");
   imuClients.add(res);
-
   const r = imu.latest();
   if (r) res.write(`data: ${JSON.stringify(r)}\n\n`);
-
-  req.on("close", () => {
-    imuClients.delete(res);
-  });
+  req.on("close", () => imuClients.delete(res));
 });
-// ----------------------------
-// Anemometer setup
-// ----------------------------
 
+// ── Anemometer ────────────────────────────────────────────────────────────
 const anemometerClients = new Set();
 
 anemometer.init({
   onUpdate: (reading) => {
     const payload = `data: ${JSON.stringify(reading)}\n\n`;
-    for (const res of anemometerClients) {
-      try { res.write(payload); } catch {}
-    }
+    for (const res of anemometerClients) { try { res.write(payload); } catch {} }
   },
 });
 
@@ -349,126 +220,155 @@ app.get("/api/anemometer/latest", (req, res) => {
 });
 
 app.get("/api/anemometer/stream", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Content-Type",  "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Connection",    "keep-alive");
   res.setHeader("Access-Control-Allow-Origin", "*");
-
   res.write("retry: 1000\n\n");
   anemometerClients.add(res);
-
   const r = anemometer.latest();
   if (r) res.write(`data: ${JSON.stringify(r)}\n\n`);
-
   req.on("close", () => anemometerClients.delete(res));
 });
 
-// ----------------------------
-// Existing endpoints
-// ----------------------------
+// ── Auto-Aim ──────────────────────────────────────────────────────────────
+app.post("/api/autoaim/start", async (req, res) => {
+  try {
+    const { heading, pitch } = req.body || {};
+    if (typeof heading !== "number" || typeof pitch !== "number")
+      return res.status(400).json({ ok: false, error: "heading and pitch required (numbers)" });
+    autoAim.start({ heading, pitch });
+    res.json({ ok: true, ...autoAim.status() });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post("/api/autoaim/stop", (req, res) => {
+  autoAim.stopAim();
+  res.json({ ok: true, ...autoAim.status() });
+});
+
+app.get("/api/autoaim/status", (req, res) => {
+  res.json(autoAim.status());
+});
+
+app.get("/api/autoaim/stream", (req, res) => {
+  res.setHeader("Content-Type",  "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection",    "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+  res.write(`data: ${JSON.stringify(autoAim.status())}\n\n`);
+  const unsub = autoAim.subscribe(msg => res.write(`data: ${msg}\n\n`));
+  req.on("close", unsub);
+});
+
+// ── General ───────────────────────────────────────────────────────────────
 app.get("/api/health", (_req, res) =>
   res.json({ status: "ok", time: new Date().toISOString() })
 );
 
 app.get("/api/sensors", (_req, res) => {
-  const anemo = anemometer.latest?.() || null;
-out.push({
-  id: "Anemometer",
-  type: "Wind",
-  updatedAt: anemo?.ts ? new Date(anemo.ts).toISOString() : null,
-  windSpeedMs:  anemo?.ms  ?? null,
-  windSpeedKmh: anemo?.kmh ?? null,
-  windVoltage:  anemo?.v   ?? null,
-});
   const nowIso = new Date().toISOString();
-
-  const out = sensors.map((s) => ({ ...s }));
+  const out = sensors.map(s => ({ ...s }));
 
   const pr = pressure.latest?.() || null;
-  out.push({
-    id: "Pressure",
-    type: "Pressure",
-    updatedAt: pr?.ts ? new Date(pr.ts).toISOString() : null,
-    ...pr,
-  });
+  out.push({ id: "Pressure", type: "Pressure", updatedAt: pr?.ts ? new Date(pr.ts).toISOString() : null, ...pr });
 
   const im = imu.latest?.() || null;
-  out.push({
-    id: "IMU",
-    type: "IMU",
-    updatedAt: im?.ts ? new Date(im.ts).toISOString() : null,
-    ...im,
-  });
+  out.push({ id: "IMU", type: "IMU", updatedAt: im?.ts ? new Date(im.ts).toISOString() : null, ...im });
 
   const sol = solenoids.status?.() || null;
+  out.push({ id: "Solenoids", type: "Actuator", updatedAt: nowIso, ...sol });
+
+  const anemo = anemometer.latest?.() || null;
   out.push({
-    id: "Solenoids",
-    type: "Actuator",
-    updatedAt: nowIso,
-    ...sol,
+    id: "Anemometer", type: "Wind",
+    updatedAt:    anemo?.ts  ? new Date(anemo.ts).toISOString() : null,
+    windSpeedMs:  anemo?.ms  ?? null,
+    windSpeedKmh: anemo?.kmh ?? null,
+    windVoltage:  anemo?.v   ?? null,
   });
 
   res.json({ sensors: out });
 });
 
-
-
-// New: quick door endpoint
 app.get("/api/door", (_req, res) => {
-  const door = sensors.find((s) => s.id === "DoorContact");
+  const door = sensors.find(s => s.id === "DoorContact");
   res.json({ ok: true, door });
 });
 
 app.post("/api/ballistics", (req, res) => {
   const { v0, dx, dy = 0, g = 9.80665, windX = 0, windY = 0 } = req.body || {};
-  if (!v0 || !dx) return res.status(400).json({ error: "v0 and dx are required (numbers)" });
-
+  if (!v0 || !dx) return res.status(400).json({ error: "v0 and dx are required" });
   const v0sq = v0 * v0;
   const termUnder = v0sq * v0sq - g * (g * dx * dx + 2 * dy * v0sq);
-  if (termUnder < 0)
-    return res
-      .status(422)
-      .json({ error: "No real solution for given inputs (target out of range for v0)." });
-
+  if (termUnder < 0) return res.status(422).json({ error: "Target out of range for v0." });
   const root = Math.sqrt(termUnder);
-  const tan1 = (v0sq + root) / (g * dx);
-  const tan2 = (v0sq - root) / (g * dx);
-  const th1 = Math.atan(tan1);
-  const th2 = Math.atan(tan2);
-
-  const theta = th2;
-  const vx = v0 * Math.cos(theta);
-  const vy = v0 * Math.sin(theta);
-
-  const a = -0.5 * g,
-    b = vy,
-    c = -dy;
+  const th1  = Math.atan((v0sq + root) / (g * dx));
+  const th2  = Math.atan((v0sq - root) / (g * dx));
+  const theta = th2, vx = v0 * Math.cos(theta), vy = v0 * Math.sin(theta);
+  const a = -0.5 * g, b = vy, c = -dy;
   const disc = b * b - 4 * a * c;
   const t = disc >= 0 ? (-b + Math.sqrt(disc)) / (2 * a) : dx / Math.max(0.001, v0 + windX);
-
   res.json({
     input: { v0, dx, dy, g, windX, windY },
-    thetaDeg: (theta * 180) / Math.PI,
-    thetaHighArcDeg: (th1 * 180) / Math.PI,
-    thetaLowArcDeg: (th2 * 180) / Math.PI,
+    thetaDeg:        (theta * 180) / Math.PI,
+    thetaHighArcDeg: (th1   * 180) / Math.PI,
+    thetaLowArcDeg:  (th2   * 180) / Math.PI,
     timeOfFlightSec: t,
-    impactVx: vx,
-    impactVy: vy - g * t,
+    impactVx: vx, impactVy: vy - g * t,
     notes: "Idealized vacuum model",
   });
 });
 
-// ----------------------------
-// Start server
-// ----------------------------
-const server = app.listen(PORT, () =>
-  console.log(`API listening on http://localhost:${PORT}`)
+
+// ── Auto-Fire ─────────────────────────────────────────────────────────────
+app.post("/api/autofire/arm", (req, res) => {
+  try {
+    const { targetPsi } = req.body || {};
+    if (typeof targetPsi !== "number")
+      return res.status(400).json({ ok: false, error: "targetPsi required (number)" });
+    autoFire.arm(targetPsi);
+    res.json({ ok: true, ...autoFire.status() });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+app.post("/api/autofire/stop", (req, res) => {
+  autoFire.stopWatch();
+  res.json({ ok: true, ...autoFire.status() });
+});
+
+app.post("/api/autofire/reset", (req, res) => {
+  autoFire.reset();
+  res.json({ ok: true, ...autoFire.status() });
+});
+
+app.get("/api/autofire/status", (req, res) => {
+  res.json(autoFire.status());
+});
+
+app.get("/api/autofire/stream", (req, res) => {
+  res.setHeader("Content-Type",  "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection",    "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+  res.write(`data: ${JSON.stringify(autoFire.status())}\n\n`);
+  const unsub = autoFire.subscribe(msg => res.write(`data: ${msg}\n\n`));
+  req.on("close", unsub);
+});
+
+// ── Catch-all: serve React ────────────────────────────────────────────────
+app.get("*", (req, res) => {
+  res.sendFile(path.join(DIST, "index.html"));
+});
+
+// ── Start ─────────────────────────────────────────────────────────────────
+const server = app.listen(PORT, "0.0.0.0", () =>
+  console.log(`API + frontend listening on http://0.0.0.0:${PORT}`)
 );
 
-// Cleanup
 process.on("SIGINT", () => {
-  try {
-    if (doorGpio) doorGpio.disableAlert?.();
-  } catch {}
+  try { if (doorGpio) doorGpio.disableAlert?.(); } catch {}
   server.close(() => process.exit(0));
 });
