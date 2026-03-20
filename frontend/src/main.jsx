@@ -5,10 +5,10 @@ import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import Dashboard from './pages/Dashboard.jsx'
 import MapPage from './pages/Map.jsx'
 import SensorStatus from './pages/SensorStatus.jsx'
-import ManualControl from './pages/ManualControl.jsx';
+import ManualControl from './pages/ManualControl.jsx'
+import Calibration from './pages/Calibration.jsx'
+import AimFire from './pages/AimFire.jsx'
 
-
-// Leaflet CSS + manual icon setup (no leaflet-defaulticon-compatibility)
 import 'leaflet/dist/leaflet.css'
 import L from 'leaflet'
 import markerIcon2x from 'leaflet/dist/images/marker-icon-2x.png'
@@ -36,8 +36,10 @@ function Shell() {
           <b>Project Ember</b>
           <NavLink to="/" end>Dashboard</NavLink>
           <NavLink to="/map">Map</NavLink>
+          <NavLink to="/aim">Aim & Fire</NavLink>
           <NavLink to="/sensors">Sensors</NavLink>
           <NavLink to="/manual">Manual</NavLink>
+          <NavLink to="/calibration">Calibration</NavLink>
         </div>
         <button className="btn ghost" onClick={()=>setTheme(theme==="dark"?"light":"dark")}>
           {theme==="dark"?"☀️ Light":"🌙 Dark"}
@@ -48,14 +50,15 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Dashboard/>}/>
           <Route path="/map" element={<MapPage/>}/>
+          <Route path="/aim" element={<AimFire/>}/>
           <Route path="/sensors" element={<SensorStatus/>}/>
           <Route path="/manual" element={<ManualControl/>}/>
+          <Route path="/calibration" element={<Calibration/>}/>
         </Routes>
       </div>
     </div>
   )
 }
-
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>

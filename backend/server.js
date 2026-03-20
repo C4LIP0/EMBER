@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs, { readFileSync, writeFileSync } from "fs";
 import dotenv from "dotenv";
 dotenv.config({ path: new URL("./.env", import.meta.url).pathname });
 
@@ -356,6 +357,120 @@ app.get("/api/autofire/stream", (req, res) => {
   res.write(`data: ${JSON.stringify(autoFire.status())}\n\n`);
   const unsub = autoFire.subscribe(msg => res.write(`data: ${msg}\n\n`));
   req.on("close", unsub);
+});
+
+
+
+// ── Calibration — JSON file based ────────────────────────────────────────
+import { mkdirSync } from "fs";
+
+const CAL_DIR     = path.join(__dirname, "../calibrations");
+const CAL_LATEST  = path.join(CAL_DIR, "latest.json");
+const ENV_PATH    = new URL("./.env", import.meta.url).pathname;
+
+// Ensure calibrations directory exists
+try { mkdirSync(CAL_DIR, { recursive: true }); } catch {}
+
+function readEnv() {
+  try {
+    const lines = readFileSync(ENV_PATH, "utf8").split("\n");
+    const env = {};
+    for (const line of lines) {
+      const [k, ...v] = line.split("=");
+      if (k && k.trim()) env[k.trim()] = v.join("=").trim();
+    }
+    return env;
+  } catch { return {}; }
+}
+
+function writeEnvValues(updates) {
+  const env = readEnv();
+  Object.assign(env, updates);
+  const content = Object.entries(env).map(([k,v]) => `${k}=${v}`).join("\n");
+  writeFileSync(ENV_PATH, content + "\n", "utf8");
+}
+
+// GET /api/calibration — load latest.json if exists, fallback to .env
+app.get("/api/calibration", (req, res) => {
+  try {
+    if (fs.existsSync(CAL_LATEST)) {
+      const cal = JSON.parse(readFileSync(CAL_LATEST, "utf8"));
+      return res.json({ ok: true, ...cal });
+    }
+    // Fallback to .env
+    const env = readEnv();
+    res.json({
+      ok: true,
+      yawMin:        parseFloat(env.AUTOAIM_YAW_MIN      ?? "-180"),
+      yawMax:        parseFloat(env.AUTOAIM_YAW_MAX      ??  "180"),
+      yawCenter:     parseFloat(env.AUTOAIM_YAW_CENTER   ??    "0"),
+      pitchMin:      parseFloat(env.AUTOAIM_PITCH_MIN    ??   "45"),
+      pitchMax:      parseFloat(env.AUTOAIM_PITCH_MAX    ??   "80"),
+      pitchCenter:   parseFloat(env.AUTOAIM_PITCH_CENTER ??   "62"),
+      headingOffset: parseFloat(env.HEADING_OFFSET       ??    "0"),
+      pitchOffset:   parseFloat(env.PITCH_OFFSET         ??  "178.5"),
+      efficiency:    parseFloat(env.BALLISTIC_EFF        ??   "0.26"),
+    });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// GET /api/calibration/history — list all saved calibrations
+app.get("/api/calibration/history", (req, res) => {
+  try {
+    const files = fs.readdirSync(CAL_DIR)
+      .filter(f => f.endsWith(".json") && f !== "latest.json")
+      .map(f => {
+        try {
+          const cal = JSON.parse(readFileSync(path.join(CAL_DIR, f), "utf8"));
+          return { file: f, ...cal };
+        } catch { return null; }
+      })
+      .filter(Boolean)
+      .sort((a,b) => new Date(b.savedAt) - new Date(a.savedAt));
+    res.json({ ok: true, history: files });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// POST /api/calibration/save — save fresh calibration
+app.post("/api/calibration/save", (req, res) => {
+  try {
+    const cal = {
+      savedAt:       new Date().toISOString(),
+      yawMin:        req.body.yawMin,
+      yawMax:        req.body.yawMax,
+      yawCenter:     req.body.yawCenter,
+      pitchMin:      req.body.pitchMin,
+      pitchMax:      req.body.pitchMax,
+      pitchCenter:   req.body.pitchCenter,
+      headingOffset: req.body.headingOffset,
+      pitchOffset:   req.body.pitchOffset,
+      efficiency:    req.body.efficiency,
+    };
+
+    // Save as latest
+    writeFileSync(CAL_LATEST, JSON.stringify(cal, null, 2), "utf8");
+
+    // Save timestamped backup
+    const ts  = new Date().toISOString().replace(/[:.]/g, "-").slice(0,19);
+    const bak = path.join(CAL_DIR, `calibration_${ts}.json`);
+    writeFileSync(bak, JSON.stringify(cal, null, 2), "utf8");
+
+    // Also update .env for motor limits
+    writeEnvValues({
+      AUTOAIM_YAW_MIN:      cal.yawMin,
+      AUTOAIM_YAW_MAX:      cal.yawMax,
+      AUTOAIM_YAW_CENTER:   cal.yawCenter,
+      AUTOAIM_PITCH_MIN:    cal.pitchMin,
+      AUTOAIM_PITCH_MAX:    cal.pitchMax,
+      AUTOAIM_PITCH_CENTER: cal.pitchCenter,
+      HEADING_OFFSET:       cal.headingOffset,
+      PITCH_OFFSET:         cal.pitchOffset,
+      BALLISTIC_EFF:        cal.efficiency,
+    });
+
+    console.log(`[cal] saved → ${bak}`);
+    res.json({ ok: true, savedAt: cal.savedAt, file: `calibration_${ts}.json` });
+  } catch(e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── Catch-all: serve React ────────────────────────────────────────────────
