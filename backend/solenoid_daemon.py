@@ -7,7 +7,7 @@ except Exception as e:
     print(json.dumps({"type":"fatal","error":f"import lgpio failed: {e}"}), flush=True)
     sys.exit(1)
 
-SHOOT = 23     # BCM
+SHOOT = 16     # BCM
 RELEASE = 24   # BCM
 ACTIVE_LOW = False  # your MOSFET board (OFF=1, ON=0)
 
